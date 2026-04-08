@@ -1,0 +1,10 @@
+pandas
+numpy
+scikit-learn
+tqdm
+sentence-transformers
+faiss-cpu
+ollama
+langchain
+langchain-community
+langchain_core
