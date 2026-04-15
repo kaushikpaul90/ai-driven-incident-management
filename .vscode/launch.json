@@ -1,0 +1,16 @@
+{
+  "name": "Python Debug",
+  "type": "python",
+  "request": "launch",
+  "program": "${file}",
+  "console": "integratedTerminal",
+  "configurations": [
+    {
+      "name": "Python: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal"
+    }
+  ]
+}

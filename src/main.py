@@ -2,7 +2,7 @@
 # we pull specific helpers from preprocessing to keep namespace clean
 from preprocessing import load_bgl, create_windows
 # import the class responsible for training and evaluating incident detectors
-from detection import IncidentDetector
+from detection_chatgpt import IncidentDetector
 
 
 # entrypoint for script execution

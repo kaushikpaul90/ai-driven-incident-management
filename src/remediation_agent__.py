@@ -1,3 +1,4 @@
+import re
 import ollama
 import json
 from langchain_core.tools import Tool
@@ -9,6 +10,7 @@ class RemediationAgent:
     def __init__(self, environment, model="llama3"):
         self.environment = environment
         self.llm = Ollama(model=model)
+        # self.llm = ChatOpenAI(temperature=0)
         self.tools = self.create_tools()
 
         # Create agent
@@ -101,6 +103,24 @@ class RemediationAgent:
     #         "result": result
     #     }
 
+    def clean_action_input(self, action_input):
+        if not action_input:
+            return action_input
+
+        if isinstance(action_input, dict):
+            action_input = (
+                action_input.get("value")
+                or action_input.get("node_id")
+                or action_input.get("service_name")
+            )
+
+        if isinstance(action_input, str):
+            # remove comments / brackets / explanations
+            cleaned = re.split(r"[ (]", action_input)[0]
+            return cleaned.strip()
+
+        return action_input
+    
     def remediate(self, diagnosis):
 
         prompt = f"""

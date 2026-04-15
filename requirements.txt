@@ -8,3 +8,4 @@ ollama
 langchain
 langchain-community
 langchain_core
+langchain-openai

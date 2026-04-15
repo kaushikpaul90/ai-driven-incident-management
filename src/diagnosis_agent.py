@@ -48,6 +48,8 @@ class DiagnosisAgent:
 
     def diagnose(self, incident_window, retrieved_docs):
         prompt = self.build_prompt(incident_window, retrieved_docs)
+        # print("\n🔹 Diagnosis Prompt:")
+        # print(prompt)
 
         response = ollama.chat(
             model=self.model,
