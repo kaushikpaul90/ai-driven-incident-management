@@ -9,7 +9,7 @@ class IncidentDetector:
         # Added ngram_range for context and 'balanced' weights for the imbalance
         self.pipeline = Pipeline([
             ('tfidf', TfidfVectorizer(max_features=5000, ngram_range=(1, 2))),
-            ('clf', LogisticRegression(max_iter=1000, class_weight='balanced'))
+            ('clf', LogisticRegression(max_iter=1000, class_weight='balanced', C=1.0))
         ])
 
     def train(self, texts, labels):

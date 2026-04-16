@@ -1,59 +1,8 @@
-# from preprocessing import load_bgl, create_windows
-# from detection import IncidentDetector
-# from rag import RAGEngine
-# from diagnosis_agent import DiagnosisAgent
-
-
-# # Load logs
-# contents, labels = load_bgl("../data/BGL.log")
-
-# # Create windows
-# window_texts, window_labels = create_windows(
-#     contents,
-#     labels,
-#     window_size=50,
-#     stride=50
-# )
-
-# print("Total windows:", len(window_texts))
-
-# # Train detector (quick training for test)
-# detector = IncidentDetector()
-# X_test, y_test = detector.train(window_texts, window_labels)
-
-# # Initialize RAG
-# rag = RAGEngine("../knowledge_base")
-
-# # Initialize Diagnosis Agent
-# diagnosis_agent = DiagnosisAgent(model="llama3")
-
-# # Find first 3 incident windows
-# incident_count = 0
-
-# for text, label in zip(window_texts, window_labels):
-#     if label == 1:
-#         print("\n==========================")
-#         print("Incident Detected")
-#         print("==========================")
-
-#         # Retrieve knowledge
-#         retrieved_docs = rag.retrieve(text, top_k=3)
-
-#         # Diagnose
-#         diagnosis = diagnosis_agent.diagnose(text, retrieved_docs)
-
-#         print("Diagnosis Output:")
-#         print(diagnosis)
-
-#         incident_count += 1
-
-#         if incident_count == 3:
-#             break
-
 import os
 import re
+import sys
 import json
-
+import logging
 from preprocessing import load_bgl, create_windows
 from detection import IncidentDetector
 from rag import RAGEngine
@@ -62,6 +11,68 @@ from remediation_engine import RemediationEngine
 from environment import SystemEnvironment
 from evaluation import evaluate_remediation
 from langchain_community.llms import Ollama
+
+# -----------------------------
+# 🔥 LOGGING SETUP
+# -----------------------------
+LOG_FILE = "incident_pipeline.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, mode="w"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger()
+
+# -----------------------------
+# 🔥 REDIRECT PRINT → LOGGER
+# -----------------------------
+class StreamToLogger:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+        self.linebuf = ""
+
+    def write(self, buf):
+        for line in buf.splitlines():
+            clean_line = line.strip()
+
+            # 🚫 Ignore empty lines completely
+            if not clean_line:
+                continue
+
+            # 🔥 Handle tqdm progress bars
+            if re.search(r"\d+it\s*\[", clean_line) or "it/s" in clean_line:
+                self.logger.info(clean_line)
+                continue
+
+            # 🔥 Handle model loading progress
+            if "Loading weights" in clean_line:
+                self.logger.info(clean_line)
+                continue
+
+            # 🔥 Handle sklearn warnings (downgrade)
+            if "RuntimeWarning" in clean_line or "warning" in clean_line.lower():
+                self.logger.warning(clean_line)
+                continue
+
+            # Default behavior
+            self.logger.log(self.level, clean_line)
+
+    def flush(self):
+        for handler in self.logger.handlers:
+            handler.flush()
+
+    def isatty(self):
+        return False
+
+# 🚨 Redirect ALL prints globally
+sys.stdout = StreamToLogger(logger, logging.INFO)
+# sys.stderr = StreamToLogger(logger, logging.ERROR)
 
 def extract_nodes(log_text: str):
     patterns = [
@@ -77,6 +88,51 @@ def extract_nodes(log_text: str):
         nodes.update(matches)
 
     return list(nodes)
+
+def extract_services_from_logs(log_lines):
+    services = set()
+
+    keywords = [
+        "cache",
+        "memory",
+        "disk",
+        "io",
+        "network",
+        "filesystem",
+        "cpu"
+    ]
+
+    for line in log_lines:
+        line_lower = line.lower()
+
+        for keyword in keywords:
+            if keyword in line_lower:
+                services.add(keyword)
+
+    return list(services)
+
+def extract_services_from_diagnosis(diagnosis):
+    services = set()
+
+    text = (
+        diagnosis.get("incident_type", "") +
+        " " +
+        diagnosis.get("root_cause", "")
+    ).lower()
+
+    if "cache" in text:
+        services.add("cache")
+
+    if "memory" in text:
+        services.add("memory")
+
+    if "disk" in text or "io" in text:
+        services.add("disk_io")
+
+    if "network" in text:
+        services.add("network")
+
+    return list(services)
 
 # -----------------------------
 # STEP 1: Load Logs
@@ -139,8 +195,10 @@ all_metrics = []
 detection_correct_count = 0
 total_detected = 0
 
+print(f"\nTotal anomalies detected: {sum(predictions)}")
 for text, pred, true_label in zip(window_texts, predictions, window_labels):
     if pred == 1:
+        print(f"\nProcessing anomaly index: {incident_count}")
         total_detected += 1
 
         if pred == true_label:
@@ -166,14 +224,22 @@ for text, pred, true_label in zip(window_texts, predictions, window_labels):
             "severity": diagnosis.get("severity")
         }
 
-        # remediation_result = remediation_agent.remediate(clean_diagnosis)
-        nodes = extract_nodes(text)
+        nodes = [n.lower() for n in extract_nodes(text)]
         print("🔍 Extracted Nodes:", nodes)
 
         # Register nodes in environment
         env.register_nodes(nodes)
         if not nodes:
             print("⚠️ No nodes found in this incident window")
+
+        services_from_logs = extract_services_from_logs([text])
+        services_from_diag = extract_services_from_diagnosis(clean_diagnosis)
+        services = list(set(services_from_logs + services_from_diag))
+        if services:
+            env.register_services(services)
+        else:
+            print("⚠️ No services detected — using environment baseline")
+            env.register_services(env.get_default_services())
 
         remediation_result = remediation_engine.run(
             clean_diagnosis,
@@ -201,8 +267,8 @@ for text, pred, true_label in zip(window_texts, predictions, window_labels):
 
         incident_count += 1
 
-        # if incident_count == 3:
-        #     break
+        if incident_count == 1000:
+            break
 
 # ----------------------------------
 # STEP 7: Failure Analysis (Deep Dive)

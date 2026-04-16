@@ -1,160 +1,176 @@
 import json
 import re
 
+
 class RemediationEngine:
     def __init__(self, llm):
         self.llm = llm
 
+        self.VALID_ACTIONS = [
+            "restart_node",
+            "isolate_node",
+            "restart_service",
+            "start_service",
+            "stop_service",
+            "monitor_node",
+            "verify_configuration",
+            "no_action_required",
+            "open_incident_ticket"
+        ]
+
+    # -------------------------------
+    # NORMALIZE
+    # -------------------------------
+    def _normalize(self, value):
+        if value is None:
+            return None
+        return str(value).strip().lower()
+
+    # -------------------------------
+    # PARSE JSON
+    # -------------------------------
+    def _parse_response(self, raw_text):
+        try:
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if not match:
+                return {}
+
+            json_str = match.group(0)
+            json_str = json_str.replace("'", '"')
+
+            return json.loads(json_str)
+
+        except Exception as e:
+            print("⚠️ JSON parsing failed:", e)
+            return {}
+
+    # -------------------------------
+    # DECISION ENGINE
+    # -------------------------------
     def decide(self, diagnosis, system_state, nodes):
         valid_nodes = nodes if nodes else []
-        valid_services = list(system_state.get("services", {}).keys())
-        
-        # Extract key info for the prompt
+        valid_services = list(system_state.services.keys())
+        valid_actions = system_state.valid_actions()
+
         incident = diagnosis.get("incident_type", "Unknown")
         root_cause = diagnosis.get("root_cause", "Unknown")
 
-        prompt = f"""
-                    You are a Critical Infrastructure Recovery Agent.
-                    Your goal is to select the correct corrective action based on the Diagnosis.
+        def build_prompt(error_feedback=None):
+            feedback = f"\nPREVIOUS ERROR:\n{error_feedback}\n" if error_feedback else ""
 
-                    DIAGNOSIS:
-                    - Type: {incident}
-                    - Root Cause: {root_cause}
+            return f"""
+                        You are a Critical Infrastructure Recovery Agent.
 
-                    SYSTEM STATE:
-                    - Available Nodes: {valid_nodes}
-                    - Available Services: {valid_services}
+                        DIAGNOSIS:
+                        - Type: {incident}
+                        - Root Cause: {root_cause}
 
-                    STRICT MAPPING RULES:
-                    1. If Type contains "Memory", "EDRAM", "Cache", or "TLB":
-                    - This is HARDWARE.
-                    - Preferred Action: "restart_node" or "isolate_node".
-                    - Target: Must be one of {valid_nodes}.
-                    2. If Type contains "Network", "Socket", or "Connection":
-                    - This is SOFTWARE/SERVICE.
-                    - Preferred Action: "restart_service".
-                    - Target: Must be one of {valid_services}.
-                    3. If {valid_nodes} is empty and it's a hardware error:
-                    - Action: "open_incident_ticket".
-                    - Target: "Human intervention required - No nodes identified".
+                        SYSTEM STATE:
+                        {system_state.to_dict()}
 
-                    OUTPUT ONLY VALID JSON:
-                    {{
-                        "action": "restart_node | isolate_node | restart_service | open_incident_ticket",
-                        "action_input": "specific_node_id | specific_service_name | description_string"
-                    }}
-                """
-        
-        response = self.llm.invoke(prompt)
-        raw_text = response if isinstance(response, str) else response.content
+                        VALID NODES:
+                        {valid_nodes}
 
-        parsed = self._parse_response(raw_text)
+                        VALID SERVICES:
+                        {valid_services}
 
-        # ✅ Defensive checks BEFORE normalization
-        if not parsed.get("action"):
-            print("❌ Missing action from LLM")
-            fallback = self.fallback_action(incident, valid_nodes, valid_services)
-            return fallback, raw_text
+                        AVAILABLE ACTIONS:
+                        {valid_actions}
 
-        action = self.normalize(parsed.get("action")).lower()
-        action_input = self.normalize(parsed.get("action_input"))
+                        DECISION GUIDELINES:
+                        - Hardware errors → restart_node / isolate_node / monitor_node
+                        - Network errors → restart_service
+                        - Service crash → start_service
+                        - Misconfiguration / file errors → verify_configuration
+                        - Transient / corrected errors → no_action_required
+                        - Severe / unknown → open_incident_ticket
 
-        # ✅ Validation
-        if action in ["restart_node", "isolate_node"]:
-            if action_input not in valid_nodes:
-                print("❌ Invalid node from LLM:", action_input)
-                fallback = self.fallback_action(incident, valid_nodes, valid_services)
-                return fallback, raw_text
+                        STRICT RULES:
+                        - Node actions MUST use valid_nodes
+                        - Service actions MUST use valid_services
+                        - action_input MUST be exact match
+                        - DO NOT invent names
+                        - If VALID SERVICES is empty → DO NOT choose service actions
 
-        if action == "restart_service":
-            if action_input not in valid_services:
-                print("❌ Invalid service from LLM:", action_input)
-                fallback = self.fallback_action(incident, valid_nodes, valid_services)
-                return fallback, raw_text
+                        IMPORTANT:
+                        - Output ONLY JSON
+                        - No explanation text
 
-        return {
-            "action": action,
-            "action_input": action_input
-        }, raw_text
-    
-    # -----------------------------
-    # Fallback Logic
-    # -----------------------------
-    def fallback_action(self, incident, valid_nodes, valid_services):
-        incident_lower = incident.lower()
+                        {feedback}
 
-        if any(k in incident_lower for k in ["memory", "edram", "cache", "tlb"]):
-            if valid_nodes:
+                        FORMAT:
+                        {{
+                            "action": "restart_node | isolate_node | restart_service | open_incident_ticket",
+                            "action_input": "exact_node_or_service_name"
+                        }}
+                    """
+
+        last_raw = None
+        error_feedback = None
+
+        # 🔁 Retry loop
+        for attempt in range(2):
+            print(f"\n🔁 Attempt {attempt+1}")
+
+            prompt = build_prompt(error_feedback=error_feedback)
+            response = self.llm.invoke(prompt)
+
+            raw_text = response if isinstance(response, str) else response.content
+            last_raw = raw_text
+            print("\nLLM RAW RESPONSE:", raw_text)
+
+            parsed = self._parse_response(raw_text)
+            if not parsed:
+                error = "Empty or invalid JSON from LLM"
+                print(f"⚠️ Attempt {attempt+1} failed:", error)
+                continue
+
+            action = self._normalize(parsed.get("action"))
+            action_input = self._normalize(parsed.get("action_input"))
+
+            error = None
+
+            # -------------------------------
+            # VALIDATION
+            # -------------------------------
+            if action not in valid_actions:
+                print(f"⚠️ Unknown action from LLM: {action}")
+                action = "open_incident_ticket"
+                action_input = f"Invalid action suggested: {action}"
+
+            elif action in ["restart_node", "isolate_node", "monitor_node"]:
+                valid_nodes_normalized = [n.lower() for n in valid_nodes]
+                if action_input not in valid_nodes_normalized:
+                    error = f"Invalid node: {action_input}"
+
+            elif action in ["restart_service", "start_service", "stop_service"]:
+                if action_input not in valid_services:
+                    error = f"Invalid service: {action_input}"
+
+            # success
+            if not error:
                 return {
-                    "action": "restart_node",
-                    "action_input": valid_nodes[0]
-                }
-            else:
-                return {
-                    "action": "open_incident_ticket",
-                    "action_input": "Hardware issue - no nodes available"
-                }
+                    "action": action,
+                    "action_input": action_input
+                }, raw_text
 
-        if any(k in incident_lower for k in ["network", "socket", "connection"]):
-            if valid_services:
-                return {
-                    "action": "restart_service",
-                    "action_input": valid_services[0]
-                }
+            print(f"⚠️ Attempt {attempt+1} failed:", error)
+            error_feedback = error
+
+        # -------------------------------
+        # FINAL FALLBACK
+        # -------------------------------
+        print("🚨 LLM failed twice → fallback")
 
         return {
             "action": "open_incident_ticket",
-            "action_input": "Unknown issue"
-        }
+            "action_input": "LLM failed to produce valid remediation"
+        }, last_raw
 
-    # -----------------------------
-    # Normalization
-    # -----------------------------
-    def normalize(self, value):
-        if not value:
-            return None
-
-        if isinstance(value, str):
-            value = value.strip().strip('"').strip("'")
-
-            # ✅ Handle bad outputs like: "node1 | cache error"
-            if "|" in value:
-                value = value.split("|")[0].strip()
-
-        return value
-
-    # -----------------------------
-    # Robust Parsing
-    # -----------------------------
-    def _parse_response(self, text):
-        try:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not match:
-                return {"action": None, "action_input": None}
-
-            json_str = match.group(0)
-
-            # ✅ Fix common LLM JSON issues
-            json_str = json_str.replace("\n", " ")
-            json_str = re.sub(r",\s*}", "}", json_str)  # trailing commas
-
-            data = json.loads(json_str)
-
-            return {
-                "action": data.get("action"),
-                "action_input": data.get("action_input")
-            }
-
-        except Exception as e:
-            print("❌ JSON Parse Error:", e)
-            return {"action": None, "action_input": None}
-
-    # -----------------------------
-    # Execution
-    # -----------------------------
-    def execute(self, decision, env):
-        action = decision.get("action")
-        action_input = decision.get("action_input")
+    # -------------------------------
+    # EXECUTION
+    # -------------------------------
+    def execute(self, action, action_input, env):
 
         if action == "restart_node":
             return env.restart_node(action_input)
@@ -162,35 +178,60 @@ class RemediationEngine:
         elif action == "isolate_node":
             return env.isolate_node(action_input)
 
+        elif action == "monitor_node":
+            return env.monitor_node(action_input)
+
         elif action == "restart_service":
             return env.restart_service(action_input)
+
+        elif action == "start_service":
+            return env.start_service(action_input)
+
+        elif action == "stop_service":
+            return env.stop_service(action_input)
+
+        elif action == "verify_configuration":
+            return env.verify_configuration()
+
+        elif action == "run_diagnostics":
+            return env.run_diagnostics(action_input)
+
+        elif action == "check_logs":
+            return env.check_logs(action_input)
 
         elif action == "open_incident_ticket":
             return env.open_incident_ticket(action_input)
 
-        return {"status": "error", "message": "Invalid action"}
+        elif action == "no_action_required":
+            return env.no_action_required()
 
-    # -----------------------------
-    # Pipeline
-    # -----------------------------
+        return {"status": "error", "message": "Unknown action"}
+
+    # -------------------------------
+    # MAIN
+    # -------------------------------
     def run(self, diagnosis, env, nodes):
-        decision, raw_response = self.decide(diagnosis, env.get_state(), nodes)
+        decision, raw_response = self.decide(diagnosis, env, nodes)
 
-        if decision is None:
+        if not decision:
             return {
                 "agent_response": raw_response,
                 "action": None,
                 "action_input": None,
-                "result": {"status": "error", "message": "Invalid LLM decision"},
-                "environment_state": env.get_state()
+                "result": {"status": "error"},
+                "environment_state": env.to_dict()
             }
 
-        result = self.execute(decision, env)
+        result = self.execute(
+            decision["action"],
+            decision["action_input"],
+            env
+        )
 
         return {
             "agent_response": raw_response,
-            "action": decision.get("action"),
-            "action_input": decision.get("action_input"),
+            "action": decision["action"],
+            "action_input": decision["action_input"],
             "result": result,
-            "environment_state": env.get_state()
+            "environment_state": env.to_dict()
         }
