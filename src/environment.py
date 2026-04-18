@@ -14,6 +14,9 @@ class SystemEnvironment:
         # Unified incident tracking
         self.incident_tickets = []
 
+        # Track history
+        self.action_history = []
+
     def get_default_services(self):
         return list(self.services.keys())
 
@@ -29,7 +32,8 @@ class SystemEnvironment:
         return {
             "nodes": self.nodes,
             "services": self.services,
-            "incident_tickets": self.incident_tickets
+            "incident_tickets": self.incident_tickets,
+            "recent_actions": self.action_history[-5:]
         }
 
     def valid_actions(self):
@@ -47,6 +51,8 @@ class SystemEnvironment:
         if self.services:
             actions.extend([
                 "restart_service",
+                "start_service",
+                "stop_service",
                 "scale_service"
             ])
 
@@ -55,7 +61,7 @@ class SystemEnvironment:
             "open_incident_ticket",
             "run_diagnostics",
             "verify_configuration",
-            "noop"
+            "no_action_required"
         ])
 
         return actions
@@ -100,7 +106,9 @@ class SystemEnvironment:
         if node_id not in self.nodes:
             return {"status": "error", "message": "Node not found"}
 
-        self.nodes[node_id] = "restarted"
+        self.services[node_id] = "restarted"
+        self._log_action("restart_node", node_id)
+
         return {"status": "success", "message": f"{node_id} restarted"}
 
     def isolate_node(self, node_id):
@@ -109,6 +117,8 @@ class SystemEnvironment:
             return {"status": "error", "message": "Node not found"}
 
         self.nodes[node_id] = "isolated"
+        self._log_action("isolate_node", node_id)
+
         return {"status": "success", "message": f"{node_id} isolated"}
 
     def monitor_node(self, node_id):
@@ -124,15 +134,20 @@ class SystemEnvironment:
             self.services[service_name] = "restarted"
             return {"status": "success", "message": f"{service_name} restarted"}
 
+        self.services[service_name] = "restarted"
+        self._log_action("restart_service", service_name)
+    
         return {"status": "error", "message": "Service not found"}
 
     def start_service(self, service_name):
         self.services[service_name] = "running"
+        self._log_action("start_service", service_name)
         return {"status": "success", "message": f"{service_name} started"}
 
     def stop_service(self, service_name):
         if service_name in self.services:
             self.services[service_name] = "stopped"
+            self._log_action("stop_service", service_name)
             return {"status": "success", "message": f"{service_name} stopped"}
 
         return {"status": "error", "message": "Service not found"}
@@ -161,6 +176,7 @@ class SystemEnvironment:
         }
 
         self.incident_tickets.append(ticket)
+        self._log_action("open_incident_ticket", description)
 
         return {
             "status": "created",
@@ -207,6 +223,12 @@ class SystemEnvironment:
 
         else:
             raise ValueError(f"Invalid action: {action}")
+    
+    def _log_action(self, action, target):
+        self.action_history.append({
+            "action": action,
+            "target": target
+        })
 
     # -----------------------------
     # Debugging

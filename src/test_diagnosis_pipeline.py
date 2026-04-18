@@ -3,14 +3,14 @@ import re
 import sys
 import json
 import logging
-from preprocessing import load_bgl, create_windows
-from detection import IncidentDetector
 from rag import RAGEngine
-from diagnosis_agent import DiagnosisAgent
-from remediation_engine import RemediationEngine
+from detection import IncidentDetector
 from environment import SystemEnvironment
+from diagnosis_agent import DiagnosisAgent
 from evaluation import evaluate_remediation
 from langchain_community.llms import Ollama
+from remediation_engine import RemediationEngine
+from preprocessing import load_bgl, create_windows
 
 # -----------------------------
 # 🔥 LOGGING SETUP
@@ -76,16 +76,27 @@ sys.stdout = StreamToLogger(logger, logging.INFO)
 
 def extract_nodes(log_text: str):
     patterns = [
-        r'R\d+-M\d+-N\w+-I:J\d+-U\d+',   # Full format
-        r'R\d+-M\d+-L\d+-U\d+-C',        # Midplane format
-        r'R\d+-M\d+-N\d+'                # Short format
+        # Full BlueGene/L node format: R##-M#-N###-I:J#-U##
+        r'R\d+-M\d+-N\w+-I:J\d+-U\d+',
+        # Midplane format: R##-M#-L#-U##-C
+        r'R\d+-M\d+-L\d+-U\d+-C',
+        # Short rack-midplane-node: R##-M#-N##
+        r'R\d+-M\d+-N\d+',
+        # FIX: Extended rack format with board/chip: R##-M#-N##-C#-J##
+        r'R\d+-M\d+-N\d+-C\d+-J\d+',
+        # FIX: Rack-only node references: R##-M#
+        r'R\d+-M\d+\b',
+        # FIX: BGL style with U-suffix only: R##-M#-N##-U##
+        r'R\d+-M\d+-N\d+-U\d+',
+        # FIX: Any node-like token starting with R followed by numbers and dashes
+        # Catches BGL variations not covered above (broad fallback)
+        r'\bR\d{1,2}-[A-Z0-9][\w-]+\b',
     ]
-
+ 
     nodes = set()
-
     for pattern in patterns:
-        matches = re.findall(pattern, log_text)
-        nodes.update(matches)
+        matches = re.findall(pattern, log_text, re.IGNORECASE)
+        nodes.update(m.lower() for m in matches)
 
     return list(nodes)
 
@@ -183,7 +194,7 @@ kb_path = os.path.join(BASE_DIR, "knowledge_base")
 rag = RAGEngine(kb_path)
 diagnosis_agent = DiagnosisAgent(model="llama3")
 
-env = SystemEnvironment()
+# env = SystemEnvironment()
 llm = Ollama(model="llama3")
 remediation_engine = RemediationEngine(llm)
 
@@ -208,6 +219,9 @@ for text, pred, true_label in zip(window_texts, predictions, window_labels):
         print("🚨 Incident Detected")
         print("==========================")
 
+        # Fresh environment per incident prevents state bleed-over
+        env = SystemEnvironment()
+        
         # 🔹 RAG Retrieval
         retrieved_docs = rag.retrieve(text, top_k=5)
 
@@ -239,7 +253,7 @@ for text, pred, true_label in zip(window_texts, predictions, window_labels):
             env.register_services(services)
         else:
             print("⚠️ No services detected — using environment baseline")
-            env.register_services(env.get_default_services())
+            # env.register_services(env.get_default_services())
 
         remediation_result = remediation_engine.run(
             clean_diagnosis,
@@ -267,8 +281,11 @@ for text, pred, true_label in zip(window_texts, predictions, window_labels):
 
         incident_count += 1
 
-        if incident_count == 1000:
+        if incident_count == 100:
             break
+
+print("\n🧾 Action History:")
+print(env.to_dict().get("recent_actions", []))
 
 # ----------------------------------
 # STEP 7: Failure Analysis (Deep Dive)

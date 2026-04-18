@@ -35,6 +35,16 @@ class DiagnosisAgent:
 
                     Analyze the incident and provide a structured diagnosis.
 
+                    CLASSIFICATION RULES (apply strictly):
+                    - If the log contains "TLB" or "cache parity" or "ECC" or "hardware"
+                      → incident_type must reflect the hardware fault (e.g. "TLB Error",
+                        "Cache Parity Error"). root_cause must describe the hardware issue.
+                    - If the log contains "CioStream" or "socket" or "failed to read message
+                      prefix" WITHOUT any hardware fault keywords
+                      → incident_type should be "Network Connectivity Issue". root_cause
+                        should describe the socket/stream failure.
+                    - Do NOT mix hardware incident_type with a network root_cause or vice versa.
+
                     Respond ONLY in valid JSON format with the following fields:
                     {{
                         "incident_type": "...",
