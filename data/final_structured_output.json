@@ -1,0 +1,33 @@
+{
+    "categories": {
+        "CPU - Alignment Error": 563489,
+        "Memory - ECC Error": 201206,
+        "Memory - TLB Error": 152734,
+        "CPU - Cache Error": 119865,
+        "Software Assertion Failure": 84168,
+        "Storage Failure": 63493,
+        "Memory - Hardware Error": 192992,
+        "IO - Communication Failure": 153969,
+        "Filesystem Error": 31531,
+        "Runtime Failure": 25904,
+        "Hardware - Machine Check": 39036,
+        "Hardware - Exception Register": 18013,
+        "Hardware - Node Failure": 17364,
+        "Hardware - Status": 16896,
+        "CPU - Instruction Error": 33568,
+        "CPU - Floating Point Error": 29409,
+        "CPU - Memory Operation Error": 9824,
+        "System - Interrupt (Generic)": 76530,
+        "Hardware - Machine State": 8454,
+        "Hardware - Processor Subsystem": 8419,
+        "CPU - Byte Order Error": 8102,
+        "CPU - Exception": 8102,
+        "Network - Error": 13991,
+        "Hardware - Configuration Error": 5558,
+        "Network - Timeout": 4276
+    },
+    "diagnostics": {
+        "Diagnostic - Register Dump": 230273
+    },
+    "unmapped": []
+}
