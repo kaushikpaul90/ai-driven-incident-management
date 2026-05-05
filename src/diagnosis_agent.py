@@ -11,17 +11,20 @@ class DiagnosisAgent:
         docs_text = ""
 
         for doc in retrieved_docs:
-            source = doc["metadata"]["source"]
-            filename = doc["metadata"]["filename"]
+            source = doc.get("metadata", {}).get("source", doc.get("error_type", "knowledge_base"))
+            filename = doc.get("metadata", {}).get("filename", "N/A")
 
             docs_text += f"\n[Source: {source} | {filename}]\n"
-            docs_text += doc["content"]
+            content = doc.get("content") or doc.get("page_content") or doc.get("description", "")
+            docs_text += content
+
             docs_text += "\n---\n"
 
         prompt = f"""
                     You are a distributed systems diagnosis expert.
 
                     Use ONLY the provided context.
+                    Use disambiguation rules strictly before classifying.
 
                     Incident log window:
                     --------------------
@@ -44,6 +47,12 @@ class DiagnosisAgent:
                       → incident_type should be "Network Connectivity Issue". root_cause
                         should describe the socket/stream failure.
                     - Do NOT mix hardware incident_type with a network root_cause or vice versa.
+                    - You must not return generic labels like "Hardware Fault". Use the pre-classified incident type as primary context.
+
+                    IMPORTANT:
+                    - If the log contains words like "corrected", "recovered", "handled", "no error",
+                    then it is NOT a failure.
+                    - Only classify as FAILURE if the issue is unresolved or causing disruption.
 
                     Respond ONLY in valid JSON format with the following fields:
                     {{

@@ -1,6 +1,8 @@
 import os
 import logging
 
+from cluster_engine import ClusterEngine
+
 # -------------------------------
 # 🔥 HARD SUPPRESSION (CRITICAL)
 # -------------------------------
@@ -31,6 +33,9 @@ from evaluation import evaluate_remediation
 from langchain_community.llms import Ollama
 from remediation_engine import RemediationEngine
 from preprocessing import load_bgl, create_windows
+from entity_extractor import EntityExtractor
+from collections import defaultdict
+from event_classifier import EventClassifier
 
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
@@ -106,19 +111,6 @@ sys.stderr = StreamToLogger(logger)
 # -----------------------------
 # HELPERS
 # -----------------------------
-def extract_nodes(log_text):
-    patterns = [
-        r'R\d+-M\d+-L\d+-U\d+-C',
-        r'R\d+-M\d+-N\d+',
-        r'\bR\d{1,2}-[A-Z0-9][\w-]+\b',
-    ]
-
-    nodes = set()
-    for p in patterns:
-        nodes.update(re.findall(p, log_text, re.IGNORECASE))
-
-    return [n.lower() for n in nodes]
-
 def extract_services(text):
     keywords = ["cache", "memory", "disk", "network", "io", "cpu"]
     return list({k for k in keywords if k in text.lower()})
@@ -193,10 +185,12 @@ logger.info("STEP 5: Initializing AI Components" \
 "")
 
 logger.info("→ Loading Knowledge Base & Embeddings (RAG)")
-rag = RAGEngine(os.path.join(BASE_DIR, "knowledge_base"))
+rag = RAGEngine(os.path.join(BASE_DIR, "data"))
 
 logger.info("→ Initializing Diagnosis Agent (LLM-based)")
 diagnosis_agent = DiagnosisAgent()
+
+event_classifier = EventClassifier()
 
 logger.info("→ Loading Local LLM (LLaMA3 via Ollama)")
 llm = Ollama(model="llama3")
@@ -205,6 +199,9 @@ logger.info("→ Initializing Remediation Engine")
 remediation_engine = RemediationEngine(llm)
 
 incident_count = 0
+
+entity_extractor = EntityExtractor()
+cluster_engine = ClusterEngine(rag.kb)
 
 # -----------------------------
 # INCIDENT LOOP
@@ -221,49 +218,128 @@ for text, pred in zip(window_texts, predictions):
     logger.info("🔹 Incident Sample:")
     logger.info(text[:250] + "...")
 
-    env = SystemEnvironment()
+    text_lower = text.lower()
 
-    # RAG
-    logger.info("🔹 Retrieving Knowledge")
-    docs = rag.retrieve(text, top_k=5)
+    # ----------------------------------
+    # 🚨 HARD FILTER: SKIP SELF-HEALED LOGS
+    # ----------------------------------
+    if "corrected" in text_lower and "error" in text_lower:
+        logger.warning("⚠️ Skipping: Corrected error detected (healthy state)")
+        continue
 
-    # Diagnosis
-    logger.info("🔹 Running Diagnosis")
-    diagnosis = diagnosis_agent.diagnose(text, docs)
+    # -----------------------------
+    # 🧠 EVENT CLASSIFICATION
+    # -----------------------------
+    logger.info("🧠 Classifying Event State")
+    event_state = event_classifier.classify(text)
 
-    logger.info("🧠 Diagnosis:")
-    logger.info(json.dumps(diagnosis, indent=2))
+    logger.info(f"🧠 Event State: {event_state}")
 
-    # Nodes + Services
-    nodes = extract_nodes(text)
-    services = extract_services(text)
+    # ----------------------------------
+    # ⚠️ LOW CONFIDENCE GUARD
+    # ----------------------------------
+    if event_state.get("confidence", 0) < 0.6:
+        logger.warning("⚠️ Low confidence in event classification — skipping")
+        continue
 
-    logger.info(f"🔍 Nodes: {nodes}")
-    logger.info(f"🔍 Services: {services}")
+    # ----------------------------------
+    # ❌ SKIP NON-FAILURE EVENTS
+    # ----------------------------------
+    if event_state.get("state") != "failure":
+        logger.info("✅ Skipping non-failure event")
+        continue
 
-    env.register_nodes(nodes)
-    env.register_services(services)
+    # ----------------------------------
+    # ⚠️ DETECTION vs CLASSIFICATION MISMATCH
+    # ----------------------------------
+    if pred == 1 and event_state["state"] != "failure":
+        logger.warning("⚠️ Model detected anomaly but classified as non-failure")
+        continue
 
-    # Remediation
-    logger.info("⚙️ Running Remediation")
+    # -----------------------------
+    # CLUSTERING
+    # -----------------------------
+    clusters = cluster_engine.cluster_window(text, rag.kb)
+    logger.info(f"DEBUG: Cluster Keys → {list(clusters.keys())}")
+    
+    cluster_id = 1
 
-    result = remediation_engine.run(
-        diagnosis,
-        env,
-        nodes
-    )
+    for cluster_type, cluster_words in clusters.items():
 
-    logger.info("⚙️ Action Taken:")
-    logger.info(result["action"])
+        if cluster_type == "unknown":
+            logger.warning("⚠️ Unknown cluster detected - skipped")
+            continue
 
-    logger.info("⚙️ Result:")
-    logger.info(result["result"])
+        logger.info("\n-----------------------------------")
+        logger.info(f"SUB-INCIDENT {incident_count+1}.{cluster_id}")
+        logger.info("-----------------------------------")
 
-    # Evaluation
-    metrics = evaluate_remediation(diagnosis, result)
+        cluster_text = " ".join(cluster_words)
 
-    logger.info("📊 Metrics:")
-    logger.info(metrics)
+        logger.info(f"🔹 Cluster Type: {cluster_type}")
+        logger.info(f"🔹 Sample: {cluster_text[:200]}...")
+
+        env = SystemEnvironment()
+
+        # -----------------------------
+        # KB MATCH
+        # -----------------------------
+        kb_entry = next(
+            (e for e in rag.kb if e["error_type"] == cluster_type),
+            None
+        )
+
+        if not kb_entry:
+            continue
+
+        # -----------------------------
+        # DIAGNOSIS
+        # -----------------------------
+        logger.info("🔹 Running Diagnosis")
+
+        diagnosis = diagnosis_agent.diagnose(cluster_text, [kb_entry])
+
+        logger.info("🧠 Diagnosis:")
+        logger.info(json.dumps(diagnosis, indent=2))
+
+        # -----------------------------
+        # ENTITY EXTRACTION
+        # -----------------------------
+        nodes = entity_extractor.extract_nodes(text)
+        services = entity_extractor.extract_services(cluster_text, kb_entry)
+
+        logger.info(f"🔍 Nodes: {nodes}")
+        logger.info(f"🔍 Services: {services}")
+
+        env.register_nodes(nodes)
+        env.register_services(services)
+
+        # -----------------------------
+        # REMEDIATION
+        # -----------------------------
+        logger.info("⚙️ Running Remediation")
+
+        result = remediation_engine.run(
+            diagnosis,
+            env,
+            nodes
+        )
+
+        logger.info("⚙️ Action Taken:")
+        logger.info(result["action"])
+
+        logger.info("⚙️ Result:")
+        logger.info(result["result"])
+
+        # -----------------------------
+        # EVALUATION
+        # -----------------------------
+        metrics = evaluate_remediation(diagnosis, result)
+
+        logger.info("📊 Metrics:")
+        logger.info(metrics)
+
+        cluster_id += 1
 
     incident_count += 1
 
