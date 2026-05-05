@@ -58,6 +58,8 @@ class DiagnosisAgent:
 
     def diagnose(self, incident_window, retrieved_docs):
         prompt = self.build_prompt(incident_window, retrieved_docs)
+        # print("\n🔹 Diagnosis Prompt:")
+        # print(prompt)
 
         response = ollama.chat(
             model=self.model,
@@ -67,10 +69,12 @@ class DiagnosisAgent:
 
         content = response["message"]["content"]
 
+        # Extract JSON block safely
         try:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
-            return {"error": "No JSON found"}
+            else:
+                return {"error": "No JSON found", "raw_output": content}
         except:
-            return {"error": "Invalid JSON"}
+            return {"error": "Invalid JSON", "raw_output": content}

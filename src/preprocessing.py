@@ -41,8 +41,7 @@ def load_bgl(file_path):
     # open file safely ignoring encoding errors
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         # iterate through each line with progress reporting
-        # for line in tqdm(f):
-        for line in f:
+        for line in tqdm(f):
             # strip whitespace and parse
             label, content = parse_bgl_line(line.strip())
             # accumulate results
