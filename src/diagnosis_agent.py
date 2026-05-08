@@ -75,6 +75,6 @@ class DiagnosisAgent:
             if json_match:
                 return json.loads(json_match.group())
             else:
-                return {"error": "No JSON found", "raw_output": content}
+                return {"error": "No JSON found"}
         except:
-            return {"error": "Invalid JSON", "raw_output": content}
+            return {"error": "Invalid JSON"}
