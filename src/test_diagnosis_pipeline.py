@@ -3,6 +3,9 @@ import re
 import sys
 import json
 import logging
+import warnings
+import time
+
 from rag import RAGEngine
 from detection import IncidentDetector
 from environment import SystemEnvironment
@@ -12,87 +15,48 @@ from langchain_community.llms import Ollama
 from remediation_engine import RemediationEngine
 from preprocessing import load_bgl, create_windows
 
-# -----------------------------
-# 🔥 LOGGING SETUP
-# -----------------------------
-LOG_FILE = "incident_pipeline.log"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_NO_TORCHVISION"] = "1"
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
 
+# -----------------------------
+# LOGGING SETUP
+# -----------------------------
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, mode="w"),
-        logging.StreamHandler(sys.stdout)
-    ]
+    format="%(asctime)s | %(message)s"
 )
 
 logger = logging.getLogger()
 
 # -----------------------------
-# 🔥 REDIRECT PRINT → LOGGER
+# LIVE LOGGER HELPER
 # -----------------------------
-class StreamToLogger:
-    def __init__(self, logger, level):
-        self.logger = logger
-        self.level = level
-        self.linebuf = ""
+def live_log(message, logger_callback=None):
 
-    def write(self, buf):
-        for line in buf.splitlines():
-            clean_line = line.strip()
+    logger.info(message)
 
-            # 🚫 Ignore empty lines completely
-            if not clean_line:
-                continue
+    if logger_callback:
+        logger_callback(message)
 
-            # 🔥 Handle tqdm progress bars
-            if re.search(r"\d+it\s*\[", clean_line) or "it/s" in clean_line:
-                self.logger.info(clean_line)
-                continue
-
-            # 🔥 Handle model loading progress
-            if "Loading weights" in clean_line:
-                self.logger.info(clean_line)
-                continue
-
-            # 🔥 Handle sklearn warnings (downgrade)
-            if "RuntimeWarning" in clean_line or "warning" in clean_line.lower():
-                self.logger.warning(clean_line)
-                continue
-
-            # Default behavior
-            self.logger.log(self.level, clean_line)
-
-    def flush(self):
-        for handler in self.logger.handlers:
-            handler.flush()
-
-    def isatty(self):
-        return False
-
-# 🚨 Redirect ALL prints globally
-sys.stdout = StreamToLogger(logger, logging.INFO)
-# sys.stderr = StreamToLogger(logger, logging.ERROR)
-
+# -----------------------------
+# HELPERS
+# -----------------------------
 def extract_nodes(log_text: str):
     patterns = [
-        # Full BlueGene/L node format: R##-M#-N###-I:J#-U##
         r'R\d+-M\d+-N\w+-I:J\d+-U\d+',
-        # Midplane format: R##-M#-L#-U##-C
         r'R\d+-M\d+-L\d+-U\d+-C',
-        # Short rack-midplane-node: R##-M#-N##
         r'R\d+-M\d+-N\d+',
-        # FIX: Extended rack format with board/chip: R##-M#-N##-C#-J##
         r'R\d+-M\d+-N\d+-C\d+-J\d+',
-        # FIX: Rack-only node references: R##-M#
         r'R\d+-M\d+\b',
-        # FIX: BGL style with U-suffix only: R##-M#-N##-U##
         r'R\d+-M\d+-N\d+-U\d+',
-        # FIX: Any node-like token starting with R followed by numbers and dashes
-        # Catches BGL variations not covered above (broad fallback)
         r'\bR\d{1,2}-[A-Z0-9][\w-]+\b',
     ]
- 
+
     nodes = set()
     for pattern in patterns:
         matches = re.findall(pattern, log_text, re.IGNORECASE)
@@ -100,27 +64,19 @@ def extract_nodes(log_text: str):
 
     return list(nodes)
 
+
 def extract_services_from_logs(log_lines):
     services = set()
-
-    keywords = [
-        "cache",
-        "memory",
-        "disk",
-        "io",
-        "network",
-        "filesystem",
-        "cpu"
-    ]
+    keywords = ["cache", "memory", "disk", "io", "network", "filesystem", "cpu"]
 
     for line in log_lines:
-        line_lower = line.lower()
-
+        line = line.lower()
         for keyword in keywords:
-            if keyword in line_lower:
+            if keyword in line:
                 services.add(keyword)
 
     return list(services)
+
 
 def extract_services_from_diagnosis(diagnosis):
     services = set()
@@ -133,190 +89,353 @@ def extract_services_from_diagnosis(diagnosis):
 
     if "cache" in text:
         services.add("cache")
-
     if "memory" in text:
         services.add("memory")
-
     if "disk" in text or "io" in text:
         services.add("disk_io")
-
     if "network" in text:
         services.add("network")
 
     return list(services)
 
-# -----------------------------
-# STEP 1: Load Logs
-# -----------------------------
-print("\nLoading logs...")
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-log_path = os.path.join(BASE_DIR, "data", "BGL.log")
 
-contents, labels = load_bgl(log_path)
+# =========================================================
+# 🚀 MAIN PIPELINE FUNCTION (USED BY UI)
+# =========================================================
+def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
-# -----------------------------
-# STEP 2: Create Windows
-# -----------------------------
-print("\nCreating windows...")
-window_texts, window_labels = create_windows(
-    contents=contents,
-    labels=labels,
-    window_size=100,
-    stride=50
-)
+    live_log("STEP 1: Loading Logs", logger_callback)
 
-print("\nTotal windows:", len(window_texts))
+    # BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # log_path = os.path.join(BASE_DIR, "data", "BGL.log")
 
-# -----------------------------
-# STEP 3: Train Detection Model
-# -----------------------------
-print("\nTraining detection model...")
-detector = IncidentDetector()
-X_test, y_test = detector.train(window_texts, window_labels)
+    # contents, labels = load_bgl(log_path)
 
-# Detection Evaluation
-print("\n📊 Detection Model Evaluation:")
-detector.evaluate(X_test, y_test)
+    # Use logs coming from UI
+    contents = logs
 
-# -----------------------------
-# STEP 4: Predict Incidents
-# -----------------------------
-print("Running detection inference...")
-predictions = detector.predict(window_texts)
+    live_log(f"Loaded {len(contents)} total log lines", logger_callback)
 
-# -----------------------------
-# STEP 5: Initialize Components
-# -----------------------------
-print("\nInitializing RAG + Agents...")
+    # Since uploaded logs don’t have labels → assume normal (0)
+    if labels is None:
+        labels = [0] * len(contents)
 
-kb_path = os.path.join(BASE_DIR, "knowledge_base")
+    # -----------------------------
+    live_log("STEP 2: Creating Windows", logger_callback)
 
-rag = RAGEngine(kb_path)
-diagnosis_agent = DiagnosisAgent(model="llama3")
+    live_log("Creating sliding log windows...", logger_callback)
 
-# env = SystemEnvironment()
-llm = Ollama(model="llama3")
-remediation_engine = RemediationEngine(llm)
+    window_texts, window_labels = create_windows(
+        contents=contents,
+        labels=labels,
+        window_size=100,
+        stride=50
+    )
 
-# ----------------------------------
-# STEP 6: Process Detected Incidents
-# ----------------------------------
-incident_count = 0
-all_metrics = []
-detection_correct_count = 0
-total_detected = 0
+    live_log(f"Total Windows: {len(window_texts)}", logger_callback)
 
-print(f"\nTotal anomalies detected: {sum(predictions)}")
-for text, pred, true_label in zip(window_texts, predictions, window_labels):
-    if pred == 1:
-        print(f"\nProcessing anomaly index: {incident_count}")
-        total_detected += 1
+    # -----------------------------
+    live_log("STEP 3: Training Detection Model", logger_callback)
 
-        if pred == true_label:
-            detection_correct_count += 1
+    detector = IncidentDetector()
 
-        print("\n==========================")
-        print("🚨 Incident Detected")
-        print("==========================")
+    live_log(
+        "Initializing anomaly detection model...",
+        logger_callback
+    )
 
-        # Fresh environment per incident prevents state bleed-over
+    live_log(
+        "Training ML model on generated windows...",
+        logger_callback
+    )
+
+    X_test, y_test = detector.train(window_texts, window_labels)
+
+    live_log(
+        "Model training completed successfully",
+        logger_callback
+    )
+
+    logger.info("STEP 3.1: Evaluating Model")
+
+    live_log(
+        "Evaluating model performance metrics...",
+        logger_callback
+    )
+
+    detector.evaluate(X_test, y_test)
+
+    live_log(
+        "Model evaluation completed",
+        logger_callback
+    )
+
+    # -----------------------------
+    live_log("STEP 4: Detecting Incidents", logger_callback)
+
+    live_log(
+        "Running anomaly prediction on all windows...",
+        logger_callback
+    )
+
+    predictions = detector.predict(window_texts)
+
+    live_log(
+        f"Detected {int(sum(predictions))} anomalous windows",
+        logger_callback
+    )
+
+    # -----------------------------
+    live_log("STEP 5: Initializing AI Components", logger_callback)
+
+    live_log(
+        "Loading SentenceTransformer embeddings...",
+        logger_callback
+    )
+
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    kb_path = os.path.join(BASE_DIR, "knowledge_base")
+
+    rag = RAGEngine(kb_path)
+
+    live_log(
+        "Initializing diagnosis agent...",
+        logger_callback
+    )
+
+    diagnosis_agent = DiagnosisAgent(model="llama3")
+
+    live_log(
+        "Connecting to Ollama LLM...",
+        logger_callback
+    )
+
+    llm = Ollama(model="llama3")
+
+    live_log(
+        "Initializing remediation engine...",
+        logger_callback
+    )
+
+    remediation_engine = RemediationEngine(llm)
+
+    live_log(
+        "AI components initialized successfully",
+        logger_callback
+    )
+
+    # -----------------------------
+    incidents_output = []
+    all_metrics = []
+
+    incident_count = 0
+
+    total_predicted_incidents = int(sum(predictions))
+
+    live_log(
+        f"Beginning processing for {total_predicted_incidents} incidents",
+        logger_callback
+    )
+
+    # =====================================================
+    # MAIN LOOP
+    # =====================================================
+    for text, pred, true_label in zip(window_texts, predictions, window_labels):
+
+        if pred != 1:
+            continue
+
+        live_log("===================================", logger_callback)
+        live_log(f"INCIDENT #{incident_count + 1}", logger_callback)
+        live_log("===================================", logger_callback)
+
+        live_log(
+            f"Processing incident {incident_count + 1} "
+            f"of approximately {min(total_predicted_incidents, max_incidents)}",
+            logger_callback
+        )
+
         env = SystemEnvironment()
-        
-        # 🔹 RAG Retrieval
+
+        logger.info("🔹 Incident Sample:")
+        logger.info(text[:300])
+
+        live_log(
+            "Extracting incident sample logs...",
+            logger_callback
+        )
+
+        # -----------------------------
+        logger.info("🔹 Retrieving Knowledge")
+
+        live_log(
+            "Querying RAG knowledge base...",
+            logger_callback
+        )
+
         retrieved_docs = rag.retrieve(text, top_k=5)
 
-        # 🔹 Diagnosis
+        live_log(
+            f"Retrieved {len(retrieved_docs)} relevant knowledge documents",
+            logger_callback
+        )
+
+        # -----------------------------
+        logger.info("🔹 Running Diagnosis")
+
+        live_log(
+            "Running LLM diagnosis engine...",
+            logger_callback
+        )
+
         diagnosis = diagnosis_agent.diagnose(text, retrieved_docs)
 
-        print("\n🧠 Diagnosis Output:")
-        print(json.dumps(diagnosis, indent=2))
+        logger.info("🧠 Diagnosis:")
+        logger.info(json.dumps(diagnosis, indent=2))
 
-        # 🔹 Remediation (Agentic)
-        clean_diagnosis = {
-            "incident_type": diagnosis.get("incident_type"),
-            "root_cause": diagnosis.get("root_cause"),
-            "severity": diagnosis.get("severity")
-        }
+        live_log(
+            f"Diagnosis completed: "
+            f"{diagnosis.get('incident_type', 'Unknown Incident')}",
+            logger_callback
+        )
 
-        nodes = [n.lower() for n in extract_nodes(text)]
-        print("🔍 Extracted Nodes:", nodes)
-
-        # Register nodes in environment
+        # -----------------------------
+        nodes = extract_nodes(text)
         env.register_nodes(nodes)
-        if not nodes:
-            print("⚠️ No nodes found in this incident window")
 
-        services_from_logs = extract_services_from_logs([text])
-        services_from_diag = extract_services_from_diagnosis(clean_diagnosis)
-        services = list(set(services_from_logs + services_from_diag))
-        if services:
-            env.register_services(services)
-        else:
-            print("⚠️ No services detected — using environment baseline")
-            # env.register_services(env.get_default_services())
+        logger.info(f"🔍 Nodes: {nodes}")
+
+        live_log(
+            f"Detected {len(nodes)} impacted nodes",
+            logger_callback
+        )
+
+        services_logs = extract_services_from_logs([text])
+        services_diag = extract_services_from_diagnosis(diagnosis)
+        services = list(set(services_logs + services_diag))
+
+        env.register_services(services)
+
+        logger.info(f"🔍 Services: {services}")
+
+        live_log(
+            f"Detected impacted services: {services}",
+            logger_callback
+        )
+
+        # -----------------------------
+        logger.info("⚙️ Running Remediation")
+
+        live_log(
+            "Executing remediation engine...",
+            logger_callback
+        )
 
         remediation_result = remediation_engine.run(
-            clean_diagnosis,
+            diagnosis,
             env,
             nodes
         )
 
-        print("\n⚙️ Remediation Result:")
-        print(remediation_result)
+        logger.info("⚙️ Action Taken:")
+        logger.info(remediation_result.get("action"))
 
-        # 🔹 Evaluation
+        logger.info("⚙️ Result:")
+        logger.info(remediation_result.get("result"))
+
+        live_log(
+            f"Remediation Action: "
+            f"{remediation_result.get('action')}",
+            logger_callback
+        )
+
+        # -----------------------------
         metrics = evaluate_remediation(diagnosis, remediation_result)
 
-        # 🔹 Add detection correctness
-        metrics["detection_correct"] = int(pred == true_label)
+        logger.info("📊 Metrics:")
+        logger.info(metrics)
 
-        print("\n📊 Evaluation Metrics:")
-        print(metrics)
+        live_log(
+            f"Incident #{incident_count + 1} processing completed",
+            logger_callback
+        )
 
-        # 🔹 Environment State
-        print("\n🌐 Updated Environment State:")
-        print(env.get_environment_status())
+        # -----------------------------
+        # STORE FOR UI
+        incidents_output.append({
+            "incident_id": incident_count + 1,
+            "log": text[:300],
+            "diagnosis": diagnosis,
+            "nodes": nodes,
+            "services": services,
+            "action": remediation_result.get("action"),
+            "result": remediation_result.get("result"),
+            "metrics": metrics
+        })
 
         all_metrics.append(metrics)
 
         incident_count += 1
 
-        if incident_count == 100:
+        if incident_count >= max_incidents:
+
+            live_log(
+                f"Reached configured max incident limit "
+                f"({max_incidents})",
+                logger_callback
+            )
+
             break
 
-print("\n🧾 Action History:")
-print(env.to_dict().get("recent_actions", []))
+    # =====================================================
+    # FINAL METRICS
+    # =====================================================
+    logger.info("===================================")
+    logger.info("DEMO COMPLETE")
+    logger.info("===================================")
 
-# ----------------------------------
-# STEP 7: Failure Analysis (Deep Dive)
-# ----------------------------------
-print("\n🔍 Analyzing Detection Blind Spots...")
-# We use window_texts and window_labels from earlier in the script
-missed_incidents = detector.get_failures(window_texts, window_labels)
+    live_log(
+        "Pipeline execution completed successfully",
+        logger_callback
+    )
 
-if missed_incidents:
-    print(f"Total Missed Incidents: {len(missed_incidents)}")
-    print("Sample of missed logs:")
-    for i, log in enumerate(missed_incidents[:5]):
-        print(f"  [{i+1}] {log[:150]}...") # Print first 150 chars of the window
-else:
-    print("✅ No incidents were missed in this run.")
+    if len(all_metrics) > 0:
+        avg_action = sum(m["action_correctness"] for m in all_metrics) / len(all_metrics)
+        avg_success = sum(m["resolution_success"] for m in all_metrics) / len(all_metrics)
+    else:
+        avg_action = avg_success = 0
 
-print("\n==========================")
-print("📈 FINAL EVALUATION")
-print("==========================")
+    live_log(
+        f"Average Action Accuracy: {round(avg_action, 2)}",
+        logger_callback
+    )
 
-if len(all_metrics) == 0:
-    print("No incidents processed!")
-else:
-    avg_action = sum(m["action_correctness"] for m in all_metrics) / len(all_metrics)
-    avg_success = sum(m["resolution_success"] for m in all_metrics) / len(all_metrics)
-    avg_steps = sum(m["steps_taken"] for m in all_metrics) / len(all_metrics)
-    avg_reasoning = sum(m["reasoning_quality"] for m in all_metrics) / len(all_metrics)
-    avg_detection = sum(m["detection_correct"] for m in all_metrics) / len(all_metrics)
+    live_log(
+        f"Average Resolution Success: {round(avg_success, 2)}",
+        logger_callback
+    )
 
-    print(f"Detection Accuracy (on processed incidents): {avg_detection:.2f}")
-    print(f"Action Accuracy: {avg_action:.2f}")
-    print(f"Resolution Success: {avg_success:.2f}")
-    print(f"Avg Steps: {avg_steps:.2f}")
-    print(f"Reasoning Quality: {avg_reasoning:.2f}")
+    return {
+        "total_windows": len(window_texts),
+        "total_anomalies": int(sum(predictions)),
+        "processed_incidents": incident_count,
+        "avg_action_accuracy": avg_action,
+        "avg_resolution_success": avg_success,
+        "incidents": incidents_output
+    }
+
+
+# =========================================================
+# RUN DIRECTLY (CLI MODE)
+# =========================================================
+if __name__ == "__main__":
+
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    log_path = os.path.join(BASE_DIR, "data", "BGL.log")
+
+    contents, labels = load_bgl(log_path)
+
+    output = run_pipeline(logs=contents, labels=labels, max_incidents=5)
+
+    print("\nFINAL OUTPUT SUMMARY:")
+    print(json.dumps(output, indent=2))

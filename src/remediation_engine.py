@@ -241,6 +241,7 @@ class RemediationEngine:
             "action": "open_incident_ticket",
             "action_input": self._build_ticket_description(
                 diagnosis,
+                action_input="N/A",
                 reason="LLM failed twice"
             )
         }, last_raw
