@@ -11,7 +11,8 @@ from detection import IncidentDetector
 from environment import SystemEnvironment
 from diagnosis_agent import DiagnosisAgent
 from evaluation import evaluate_remediation
-from langchain_community.llms import Ollama
+# from langchain_community.llms import Ollama
+from llm_client import chat
 from remediation_engine import RemediationEngine
 from preprocessing import load_bgl, create_windows
 
@@ -33,6 +34,15 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 
+class UnifiedLLM:
+    def invoke(self, prompt):
+        return chat([
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ])
+
 # -----------------------------
 # LIVE LOGGER HELPER
 # -----------------------------
@@ -47,22 +57,45 @@ def live_log(message, logger_callback=None):
 # HELPERS
 # -----------------------------
 def extract_nodes(log_text: str):
-    patterns = [
-        r'R\d+-M\d+-N\w+-I:J\d+-U\d+',
-        r'R\d+-M\d+-L\d+-U\d+-C',
-        r'R\d+-M\d+-N\d+',
-        r'R\d+-M\d+-N\d+-C\d+-J\d+',
-        r'R\d+-M\d+\b',
-        r'R\d+-M\d+-N\d+-U\d+',
-        r'\bR\d{1,2}-[A-Z0-9][\w-]+\b',
+
+    # Normalize log text to uppercase
+    log_text = log_text.upper()
+
+    # ---------------------------------------------------
+    # STRICT BGL NODE REGEX
+    # ---------------------------------------------------
+    # Examples matched:
+    # R03-M1-N9-C:J09-U11
+    # R36-M0-N4-I:J18-U11
+    # R24-M1-NC-I:J18-U01
+    # R03-M1-N9-C
+    # R24-M1-NC-I
+    # ---------------------------------------------------
+    pattern = (
+        r"\bR\d{2}-M\d-"
+        r"(?:N\d+|NC|NA|NB|NF)"
+        r"(?:-[A-Z])?"
+        r"(?::J\d{2}-U\d{2})?\b"
+    )
+
+    matches = re.findall(
+        pattern,
+        log_text
+    )
+
+    # ---------------------------------------------------
+    # CLEAN SOCKET INFO
+    # ---------------------------------------------------
+    # Convert:
+    # R03-M1-N9-C:J09-U11
+    # → R03-M1-N9-C
+    # ---------------------------------------------------
+    clean_nodes = [
+        node.split(":")[0]
+        for node in matches
     ]
 
-    nodes = set()
-    for pattern in patterns:
-        matches = re.findall(pattern, log_text, re.IGNORECASE)
-        nodes.update(m.lower() for m in matches)
-
-    return list(nodes)
+    return sorted(list(set(clean_nodes)))
 
 
 def extract_services_from_logs(log_lines):
@@ -189,7 +222,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
     live_log("STEP 5: Initializing AI Components", logger_callback)
 
     live_log(
-        "Loading SentenceTransformer embeddings...",
+        "Initializing embedding provider...",
         logger_callback
     )
 
@@ -203,14 +236,22 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
         logger_callback
     )
 
-    diagnosis_agent = DiagnosisAgent(model="llama3")
+    # diagnosis_agent = DiagnosisAgent(model="llama3")
+    diagnosis_agent = DiagnosisAgent()
+
+    # live_log(
+    #     "Connecting to Ollama LLM...",
+    #     logger_callback
+    # )
+
+    # # llm = Ollama(model="llama3")
 
     live_log(
-        "Connecting to Ollama LLM...",
+        "Initializing LLM provider...",
         logger_callback
     )
 
-    llm = Ollama(model="llama3")
+    llm = UnifiedLLM()
 
     live_log(
         "Initializing remediation engine...",
