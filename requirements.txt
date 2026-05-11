@@ -13,3 +13,7 @@ streamlit
 torch
 torchvision
 watchdog
+azure-identity
+azure-keyvault-secrets
+python-dotenv
+openai

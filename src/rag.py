@@ -5,14 +5,16 @@ import faiss
 # numerical computing library used for array handling
 import numpy as np
 # transformer model for generating sentence embeddings
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
+from embedding_client import EmbeddingClient
 
 # Retrieval-Augmented Generation engine combining embedding search with documents
 class RAGEngine:
     # initialize the RAG engine with a path to a knowledge base directory
     def __init__(self, kb_path):
         # load a lightweight sentence transformer for embeddings
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        # self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.embedding_client = EmbeddingClient()
         # container for raw document texts
         self.documents = []
         # FAISS index instance, to be populated later
@@ -56,7 +58,9 @@ class RAGEngine:
     # create FAISS index from loaded documents
     def build_index(self):
         # compute embeddings for each document using the transformer
-        embeddings = self.model.encode(self.documents)
+        # embeddings = self.model.encode(self.documents)
+        embeddings = self.embedding_client.embed_texts(self.documents)
+        embeddings = np.array(embeddings)
 
         if len(embeddings.shape) == 1:
             raise ValueError("Embeddings are empty or invalid. Check document loading.")
@@ -66,12 +70,33 @@ class RAGEngine:
         # instantiate a flat (brute-force) L2 index
         self.index = faiss.IndexFlatL2(dimension)
         # add all document vectors to the FAISS index
-        self.index.add(np.array(embeddings))
+        self.index.add(embeddings)
 
     # retrieve top-k relevant documents for a given query
     def retrieve(self, query, top_k=3):
         # embed the query text in the same vector space
-        query_embedding = self.model.encode([query])
+        # query_embedding = self.model.encode([query])
+
+        # Azure OpenAI embedding models enforce token limits, so truncate extremely large
+        # incident windows only when Azure embeddings are enabled. Local SentenceTransformer
+        # embeddings continue using the full query without truncation.
+        safe_query = query
+        if hasattr(self.embedding_client, "provider"):
+            if self.embedding_client.provider == "azure":
+
+                # Prevent Azure embedding token overflow
+                MAX_QUERY_CHARS = 8000
+
+                if len(query) > MAX_QUERY_CHARS:
+                    print(
+                        f"[RAG] Large query detected ({len(query)} chars). "
+                        f"Truncating to {MAX_QUERY_CHARS} chars for Azure embeddings."
+                    )
+
+                    safe_query = query[:MAX_QUERY_CHARS]
+
+        query_embedding = self.embedding_client.embed_texts([safe_query])
+
         # perform nearest-neighbor search to get distances and indices
         distances, indices = self.index.search(np.array(query_embedding), top_k * 2)
         results = []

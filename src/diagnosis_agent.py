@@ -1,11 +1,15 @@
-import ollama
+# import ollama
 import json
 import re
+from llm_client import chat
 
 class DiagnosisAgent:
 
-    def __init__(self, model="llama3"):
-        self.model = model
+    # def __init__(self, model="llama3"):
+    #     self.model = model
+
+    def __init__(self):
+        pass
     
     def build_prompt(self, incident_window, retrieved_docs):
         docs_text = ""
@@ -61,13 +65,20 @@ class DiagnosisAgent:
         # print("\n🔹 Diagnosis Prompt:")
         # print(prompt)
 
-        response = ollama.chat(
-            model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0}
-        )
+        # response = ollama.chat(
+        #     model=self.model,
+        #     messages=[{"role": "user", "content": prompt}],
+        #     options={"temperature": 0}
+        # )
 
-        content = response["message"]["content"]
+        # content = response["message"]["content"]
+
+        content = chat([
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ])
 
         # Extract JSON block safely
         try:
