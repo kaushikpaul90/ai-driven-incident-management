@@ -1,33 +1,39 @@
 # pandas is included for potential data manipulation needs even if not directly used here
+from curses import window
+
 import pandas as pd
 # tqdm provides a progress bar wrapper for iterables
 from tqdm import tqdm
 
 
-# split a raw log line into label and message
-# input: single line string from BGL
-# output: (label, content) tuple
-
 def parse_bgl_line(line):
     """
     Parses one BGL log line.
+
     Returns:
         label (0 or 1)
-        content (log message)
+        content (FULL ORIGINAL LOG LINE)
     """
-    # split the line on spaces; allow up to 10 segments so message remains intact
-    parts = line.split(" ", 9)
-    
-    # first element is the raw label indicator
-    raw_label = parts[0]
-    # last element holds the actual log message content
-    content = parts[-1]
-    
-    # Convert the raw label string into a binary indicator
-    # '-' denotes normal (0), anything else treated as incident (1)
-    label = 0 if raw_label == "-" else 1
-    
-    # return parsed tuple for further processing
+
+    # Preserve full original line
+    full_line = line.strip()
+
+    # Empty safety check
+    if not full_line:
+        return 0, ""
+
+    # First token contains anomaly label
+    first_token = full_line.split(" ", 1)[0]
+
+    # '-' means normal log
+    label = 0 if first_token == "-" else 1
+
+    # IMPORTANT:
+    # Preserve FULL ORIGINAL LOG LINE
+    # so timestamps, node IDs, rack IDs,
+    # severity and subsystem data survive
+    content = full_line
+
     return label, content
 
 
@@ -66,8 +72,18 @@ def create_windows(contents, labels, window_size=50, stride=10):
         # determine if any event in window is labeled incident
         window_label = 1 if any(labels[i:i + window_size]) else 0
 
-        # join lines into one string and record label
-        window_texts.append(" ".join(window))
+        window_records = []
+
+        for log_text, log_label in zip(
+            window,
+            labels[i:i + window_size]
+        ):
+            window_records.append({
+                "text": log_text,
+                "label": log_label
+            })
+
+        window_texts.append(window_records)
         window_labels.append(window_label)
 
     # output the constructed windows and their respective labels

@@ -131,6 +131,79 @@ def extract_services_from_diagnosis(diagnosis):
 
     return list(services)
 
+# -----------------------------
+# EXTRACT RELEVANT FAILURE LINES
+# -----------------------------
+def extract_relevant_failure_lines(log_text):
+
+    """
+    Keeps only failure/anomaly related lines from
+    anomalous windows before sending to diagnosis.
+
+    IMPORTANT:
+    Preserve FULL ORIGINAL LOG LINES so node IDs,
+    rack IDs, timestamps, and machine identifiers
+    are retained for diagnosis and remediation.
+    """
+
+    failure_keywords = [
+        "fatal",
+        "error",
+        "fail",
+        "exception",
+        "abort",
+        "panic",
+        "timeout",
+        "unreachable",
+        "socket",
+        "ecc",
+        "parity",
+        "tlb",
+        "memory",
+        "disk",
+        "io",
+        "network",
+        "segmentation",
+        "crash"
+    ]
+
+    ignore_keywords = [
+        "detected and corrected",
+        "bit sparing",
+        "has been started",
+        "has been restarted"
+    ]
+
+    lines = log_text.splitlines()
+
+    filtered_lines = []
+
+    for line in lines:
+
+        lower_line = line.lower()
+
+        # ---------------------------------------------------
+        # SKIP CORRECTED / INFORMATIONAL RECORDS
+        # ---------------------------------------------------
+        if any(keyword in lower_line for keyword in ignore_keywords):
+            continue
+
+        # ---------------------------------------------------
+        # KEEP FAILURE RECORDS
+        # IMPORTANT:
+        # KEEP ENTIRE ORIGINAL LINE
+        # ---------------------------------------------------
+        if any(keyword in lower_line for keyword in failure_keywords):
+
+            filtered_lines.append(line.strip())
+
+    # ---------------------------------------------------
+    # FALLBACK
+    # ---------------------------------------------------
+    if not filtered_lines:
+        return log_text
+
+    return "\n".join(filtered_lines)
 
 # =========================================================
 # 🚀 MAIN PIPELINE FUNCTION (USED BY UI)
@@ -182,7 +255,12 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
         logger_callback
     )
 
-    X_test, y_test = detector.train(window_texts, window_labels)
+    training_texts = [
+        "\n".join([r["text"] for r in window])
+        for window in window_texts
+    ]
+
+    X_test, y_test = detector.train(training_texts, window_labels)
 
     live_log(
         "Model training completed successfully",
@@ -211,7 +289,12 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
         logger_callback
     )
 
-    predictions = detector.predict(window_texts)
+    prediction_texts = [
+        "\n".join([r["text"] for r in window])
+        for window in window_texts
+    ]
+
+    predictions = detector.predict(prediction_texts)
 
     live_log(
         f"Detected {int(sum(predictions))} anomalous windows",
@@ -314,7 +397,25 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
             logger_callback
         )
 
-        retrieved_docs = rag.retrieve(text, top_k=5)
+        # ---------------------------------------------------
+        # Use only anomalous records for RAG retrieval
+        # ---------------------------------------------------
+        filtered_lines = [
+            record["text"]
+            for record in text
+            if record["label"] == 1
+        ]
+
+        # Fallback safety
+        if not filtered_lines:
+            filtered_lines = [
+                record["text"]
+                for record in text
+            ]
+
+        filtered_text = "\n".join(filtered_lines)
+
+        retrieved_docs = rag.retrieve(filtered_text, top_k=5)
 
         live_log(
             f"Retrieved {len(retrieved_docs)} relevant knowledge documents",
@@ -325,11 +426,24 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
         logger.info("🔹 Running Diagnosis")
 
         live_log(
+            "Filtering relevant failure records...",
+            logger_callback
+        )
+
+        filtered_lines = [
+            record["text"]
+            for record in text
+            if record["label"] == 1
+        ]
+
+        filtered_text = "\n".join(filtered_lines)
+
+        live_log(
             "Running LLM diagnosis engine...",
             logger_callback
         )
 
-        diagnosis = diagnosis_agent.diagnose(text, retrieved_docs)
+        diagnosis = diagnosis_agent.diagnose(filtered_text, retrieved_docs)
 
         logger.info("🧠 Diagnosis:")
         logger.info(json.dumps(diagnosis, indent=2))
@@ -341,7 +455,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
         )
 
         # -----------------------------
-        nodes = extract_nodes(text)
+        nodes = extract_nodes(filtered_text)
         env.register_nodes(nodes)
 
         logger.info(f"🔍 Nodes: {nodes}")
@@ -351,7 +465,23 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
             logger_callback
         )
 
-        services_logs = extract_services_from_logs([text])
+        # ---------------------------------------------------
+        # Extract only anomalous log lines for service analysis
+        # ---------------------------------------------------
+        service_logs = [
+            record["text"]
+            for record in text
+            if record["label"] == 1
+        ]
+
+        # Fallback safety
+        if not service_logs:
+            service_logs = [
+                record["text"]
+                for record in text
+            ]
+
+        services_logs = extract_services_from_logs(service_logs)
         services_diag = extract_services_from_diagnosis(diagnosis)
         services = list(set(services_logs + services_diag))
 
@@ -478,5 +608,5 @@ if __name__ == "__main__":
 
     output = run_pipeline(logs=contents, labels=labels, max_incidents=5)
 
-    print("\nFINAL OUTPUT SUMMARY:")
-    print(json.dumps(output, indent=2))
+    # print("\nFINAL OUTPUT SUMMARY:")
+    # print(json.dumps(output, indent=2))
