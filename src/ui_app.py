@@ -1,9 +1,13 @@
 import streamlit as st
 import pandas as pd
 import time
+import logging
 from datetime import datetime
+from app import run_pipeline
+from telemetry import setup_telemetry
 
-from src.test_diagnosis_pipeline import run_pipeline
+setup_telemetry()
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------
 # PAGE CONFIG
@@ -186,7 +190,7 @@ if run_button:
         "- Loading RAG pipeline\n"
         "- Running LLM diagnosis\n"
         "- Executing remediation engine\n\n"
-        "Please monitor the live backend logs below."
+        # "Please monitor the live backend logs below."
     )
 
     progress_bar.progress(60)
@@ -269,7 +273,43 @@ if run_button:
     # ---------------------------------------------------
     st.subheader("📊 System Metrics")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # ---------------------------------------------------
+    # FETCH WINDOW STATISTICS
+    # ---------------------------------------------------
+    total_windows = data.get(
+        "total_windows",
+        0
+    )
+
+    correct_windows = data.get(
+        "correct_windows",
+        0
+    )
+
+    anomalous_windows = data.get(
+        "anomalous_windows",
+        0
+    )
+
+    # ---------------------------------------------------
+    # TELEMETRY
+    # ---------------------------------------------------
+    logger.info(
+        "Window statistics displayed",
+        extra={
+            "custom_dimensions": {
+                "total_windows": total_windows,
+                "correct_windows": correct_windows,
+                "anomalous_windows": anomalous_windows,
+                "processed_incidents": processed_count
+            }
+        }
+    )
+
+    # ---------------------------------------------------
+    # UI METRICS
+    # ---------------------------------------------------
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.metric(
@@ -277,10 +317,20 @@ if run_button:
             len(logs)
         )
 
+        st.metric(
+            "Total Windows",
+            total_windows
+        )
+
     with col2:
         st.metric(
-            "Detected Incidents",
-            total_detected
+            "Correct Windows",
+            correct_windows
+        )
+
+        st.metric(
+            "Anomalous Windows",
+            anomalous_windows
         )
 
     with col3:
@@ -289,49 +339,305 @@ if run_button:
             processed_count
         )
 
-    with col4:
         st.metric(
             "Execution Time",
             f"{execution_time} sec"
         )
 
     # ---------------------------------------------------
-    # PERFORMANCE CHART
+    # ML MODEL EVALUATION
     # ---------------------------------------------------
-    chart_data = []
+    st.subheader("🤖 ML Model Evaluation")
 
-    for idx, incident in enumerate(incidents):
+    ml_metrics = data.get(
+        "ml_metrics",
+        {}
+    )
 
-        if isinstance(incident, dict):
+    if len(ml_metrics) > 0:
 
-            metrics = incident.get(
-                "metrics",
-                {}
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric(
+                "Accuracy",
+                ml_metrics.get(
+                    "accuracy",
+                    0
+                )
             )
 
-            chart_data.append({
-                "incident_id": idx + 1,
-                "action_correctness": metrics.get(
-                    "action_correctness", 0
-                ),
-                "resolution_success": metrics.get(
-                    "resolution_success", 0
-                ),
-                "reasoning_quality": metrics.get(
-                    "reasoning_quality", 0
+        with col2:
+            st.metric(
+                "Precision",
+                ml_metrics.get(
+                    "precision",
+                    0
                 )
-            })
+            )
 
-    if len(chart_data) > 0:
+        with col3:
+            st.metric(
+                "Recall",
+                ml_metrics.get(
+                    "recall",
+                    0
+                )
+            )
 
-        st.subheader(
-            "📈 Performance Visualization"
+        with col4:
+            st.metric(
+                "F1 Score",
+                ml_metrics.get(
+                    "f1_score",
+                    0
+                )
+            )
+
+        # -------------------------------------------------
+        # VISUALIZATION
+        # -------------------------------------------------
+        st.markdown(
+            "### 📈 ML Evaluation Visualization"
         )
 
-        df = pd.DataFrame(chart_data)
+        ml_chart_df = pd.DataFrame({
+            "Metric": [
+                "Accuracy",
+                "Precision",
+                "Recall",
+                "F1 Score"
+            ],
+            "Score": [
+                ml_metrics.get(
+                    "accuracy",
+                    0
+                ),
+
+                ml_metrics.get(
+                    "precision",
+                    0
+                ),
+
+                ml_metrics.get(
+                    "recall",
+                    0
+                ),
+
+                ml_metrics.get(
+                    "f1_score",
+                    0
+                )
+            ]
+        })
+
+        st.bar_chart(
+            ml_chart_df.set_index("Metric")
+        )
+
+        # -------------------------------------------------
+        # TELEMETRY
+        # -------------------------------------------------
+        logger.info(
+            "ML evaluation metrics displayed",
+            extra={
+                "custom_dimensions": ml_metrics
+            }
+        )
+
+    else:
+
+        st.warning(
+            "No ML evaluation metrics available."
+        )
+
+    # ---------------------------------------------------
+    # PERFORMANCE VISUALIZATION
+    # ---------------------------------------------------
+    st.subheader("📈 AI Performance Visualization")
+
+    performance_metrics = data.get(
+        "performance_metrics",
+        []
+    )
+
+    if len(performance_metrics) > 0:
+
+        perf_df = pd.DataFrame(
+            performance_metrics
+        )
+
+        # =================================================
+        # GRAPH 1 — AI OPERATIONAL TELEMETRY
+        # =================================================
+        st.markdown(
+            "### ⚙️ AI Operational Telemetry"
+        )
+
+        telemetry_df = perf_df[
+            [
+                "incident_id",
+                "diagnosis_time_sec",
+                "remediation_time_sec",
+                "confidence",
+                "node_count",
+                "anomalous_windows"
+            ]
+        ].copy()
+
+        telemetry_df = telemetry_df.set_index(
+            "incident_id"
+        )
 
         st.line_chart(
-            df.set_index("incident_id")
+            telemetry_df
+        )
+
+        # -------------------------------------------------
+        # TELEMETRY SUMMARY
+        # -------------------------------------------------
+        avg_diagnosis_time = round(
+            perf_df["diagnosis_time_sec"].mean(),
+            2
+        )
+
+        avg_remediation_time = round(
+            perf_df["remediation_time_sec"].mean(),
+            2
+        )
+
+        avg_confidence = round(
+            perf_df["confidence"].mean(),
+            2
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                "Avg Diagnosis Time",
+                f"{avg_diagnosis_time} sec"
+            )
+
+        with col2:
+            st.metric(
+                "Avg Remediation Time",
+                f"{avg_remediation_time} sec"
+            )
+
+        with col3:
+            st.metric(
+                "Avg Confidence",
+                avg_confidence
+            )
+
+        # =================================================
+        # GRAPH 2 — EVALUATION METRICS
+        # =================================================
+        st.markdown(
+            "### 🧠 Evaluation Metrics"
+        )
+
+        evaluation_df = perf_df[
+            [
+                "incident_id",
+                "action_correctness",
+                "resolution_success",
+                "reasoning_quality"
+            ]
+        ].copy()
+
+        evaluation_df = evaluation_df.set_index(
+            "incident_id"
+        )
+
+        st.line_chart(
+            evaluation_df
+        )
+
+        # -------------------------------------------------
+        # EVALUATION SUMMARY
+        # -------------------------------------------------
+        avg_action_accuracy = round(
+            perf_df["action_correctness"].mean(),
+            2
+        )
+
+        avg_resolution_success = round(
+            perf_df["resolution_success"].mean(),
+            2
+        )
+
+        avg_reasoning_quality = round(
+            perf_df["reasoning_quality"].mean(),
+            2
+        )
+
+        col4, col5, col6 = st.columns(3)
+
+        with col4:
+            st.metric(
+                "Avg Action Accuracy",
+                avg_action_accuracy
+            )
+
+        with col5:
+            st.metric(
+                "Avg Resolution Success",
+                avg_resolution_success
+            )
+
+        with col6:
+            st.metric(
+                "Avg Reasoning Quality",
+                avg_reasoning_quality
+            )
+
+        # =================================================
+        # DETAILED TABLE
+        # =================================================
+        with st.expander(
+            "📋 Detailed Performance Metrics"
+        ):
+
+            st.dataframe(
+                perf_df,
+                use_container_width=True
+            )
+
+        # =================================================
+        # TELEMETRY LOGGING
+        # =================================================
+        logger.info(
+            "Performance visualization rendered",
+            extra={
+                "custom_dimensions": {
+                    "total_visualized_incidents":
+                        len(perf_df),
+
+                    "avg_diagnosis_time_sec":
+                        avg_diagnosis_time,
+
+                    "avg_remediation_time_sec":
+                        avg_remediation_time,
+
+                    "avg_confidence":
+                        avg_confidence,
+
+                    "avg_action_accuracy":
+                        avg_action_accuracy,
+
+                    "avg_resolution_success":
+                        avg_resolution_success
+                }
+            }
+        )
+
+    else:
+
+        st.warning(
+            "No performance metrics available "
+            "for visualization."
         )
 
     # ---------------------------------------------------
