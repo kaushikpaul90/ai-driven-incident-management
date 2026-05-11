@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+
+# Large log files
+*.log
+
+# BGL dataset
+/data/BGL.log
+BGL.log
