@@ -9,3 +9,7 @@ langchain
 langchain-community
 langchain_core
 langchain-openai
+streamlit
+torch
+torchvision
+watchdog
