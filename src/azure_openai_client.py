@@ -5,29 +5,6 @@ from keyvault_client import KeyVaultClient
 
 load_dotenv()
 
-# endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-# deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-# api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-
-# api_key = os.getenv("AZURE_OPENAI_API_KEY")
-
-# client = AzureOpenAI(
-#     api_key=api_key,
-#     api_version=api_version,
-#     azure_endpoint=endpoint
-# )
-
-
-# def azure_chat(messages):
-
-#     response = client.chat.completions.create(
-#         model=deployment,
-#         messages=messages,
-#         temperature=0
-#     )
-
-#     return response.choices[0].message.content
-
 class AzureOpenAIClient:
 
     def __init__(self):

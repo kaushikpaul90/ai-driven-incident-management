@@ -17,3 +17,6 @@ azure-identity
 azure-keyvault-secrets
 python-dotenv
 openai
+azure-monitor-opentelemetry
+opentelemetry-api
+opentelemetry-sdk
