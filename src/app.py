@@ -886,5 +886,5 @@ if __name__ == "__main__":
 
     output = run_pipeline(logs=contents, labels=labels, max_incidents=5)
 
-    # print("\nFINAL OUTPUT SUMMARY:")
-    # print(json.dumps(output, indent=2))
+    print("\nFINAL OUTPUT SUMMARY:")
+    print(json.dumps(output, indent=2))
