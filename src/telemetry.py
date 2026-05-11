@@ -17,14 +17,16 @@ def setup_telemetry():
         "APPLICATIONINSIGHTS_CONNECTION_STRING"
     )
 
-    if connection_string:
+    if not connection_string:
+        print("Application Insights connection string not found.")
+        return
 
-        configure_azure_monitor(
-            connection_string=connection_string
-        )
+    configure_azure_monitor(
+        connection_string=connection_string
+    )
 
-        logging.info(
-            "Azure Application Insights initialized"
-        )
+    logging.basicConfig(level=logging.INFO)
 
-        _telemetry_initialized = True
+    _telemetry_initialized = True
+
+    print("Application Insights telemetry initialized.")
