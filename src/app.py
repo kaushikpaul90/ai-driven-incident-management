@@ -81,8 +81,8 @@ def extract_nodes(log_text: str):
     # ---------------------------------------------------
     pattern = (
         r"\bR\d{2}-M\d-"
-        r"(?:N\d+|NC|NA|NB|NF)"
-        r"(?:-[A-Z])?"
+        r"(?:N\d|NC|NA|NB|NF)"
+        r"(?:-[A-Z])"
         r"(?::J\d{2}-U\d{2})?\b"
     )
 
@@ -733,7 +733,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
             # STORE FOR UI
             incidents_output.append({
                 "incident_id": incident_count + 1,
-                "log": text[:300],
+                "log": filtered_text,
                 "diagnosis": diagnosis,
                 "nodes": nodes,
                 "services": services,

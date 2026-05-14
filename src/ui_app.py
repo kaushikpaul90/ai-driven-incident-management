@@ -69,7 +69,7 @@ def parse_bgl(uploaded_file):
         else:
             labels.append(1)
 
-        logs.append(" ".join(parts[1:]))
+        logs.append(line.strip())
 
     return logs, labels
 
