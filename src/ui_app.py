@@ -51,11 +51,12 @@ st.markdown("Live AI-powered log analysis using ML + LLM + RAG")
 # ---------------------------------------------------
 st.sidebar.header("⚙️ Controls")
 
-max_incidents = st.sidebar.slider(
+max_incidents = st.sidebar.number_input(
     "Max Incidents to Process",
     min_value=1,
-    max_value=20,
-    value=5
+    max_value=4747963,
+    value=5,
+    step=1
 )
 
 uploaded_file = st.sidebar.file_uploader(
@@ -593,45 +594,87 @@ if st.session_state.pipeline_completed:
             "### ⚙️ AI Operational Telemetry"
         )
 
-        telemetry_df = perf_df[
-            [
-                "incident_id",
-                "diagnosis_time_sec",
-                "remediation_time_sec",
-                "confidence",
-                "node_count",
-                "anomalous_windows"
-            ]
-        ].copy()
+        telemetry_metrics = [
+            "diagnosis_time_sec",
+            "remediation_time_sec",
+            "confidence",
+            "node_count"
+        ]
 
-        telemetry_df = telemetry_df.set_index(
-            "incident_id"
-        )
+        for metric in telemetry_metrics:
 
-        st.line_chart(
-            telemetry_df
-        )
+            st.markdown(f"#### {metric}")
+
+            chart_df = perf_df[
+                ["incident_id", metric]
+            ].copy()
+
+            chart_df = chart_df.round(2)
+
+            chart_df = chart_df.set_index(
+                "incident_id"
+            )
+
+            # ---------------------------------------------------
+            # NORMALIZE LARGE VALUES FOR VISIBILITY
+            # ---------------------------------------------------
+            max_value = chart_df[metric].max()
+
+            if max_value > 100:
+
+                chart_df[metric] = (
+                    chart_df[metric] / max_value
+                ) * 100
+
+            st.bar_chart(chart_df)
 
         st.markdown(
             "### 🧠 Evaluation Metrics"
         )
 
-        evaluation_df = perf_df[
-            [
-                "incident_id",
-                "action_correctness",
-                "resolution_success",
-                "reasoning_quality"
-            ]
-        ].copy()
-
-        evaluation_df = evaluation_df.set_index(
-            "incident_id"
+        avg_action = round(
+            perf_df["action_correctness"].mean(),
+            2
         )
 
-        st.line_chart(
-            evaluation_df
+        avg_resolution = round(
+            perf_df["resolution_success"].mean(),
+            2
         )
+
+        avg_reasoning = round(
+            perf_df["reasoning_quality"].mean(),
+            2
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Action Correctness",
+                avg_action
+            )
+
+            st.progress(avg_action)
+
+        with col2:
+
+            st.metric(
+                "Resolution Success",
+                avg_resolution
+            )
+
+            st.progress(avg_resolution)
+
+        with col3:
+
+            st.metric(
+                "Reasoning Quality",
+                avg_reasoning
+            )
+
+            st.progress(avg_reasoning)
 
         with st.expander(
             "📋 Detailed Performance Metrics"
@@ -655,10 +698,29 @@ if st.session_state.pipeline_completed:
     # ---------------------------------------------------
     st.subheader("🚨 Incident Analysis")
 
-    for i, incident in enumerate(incidents):
+    if len(incidents) > 0:
 
-        with st.expander(f"Incident {i+1}"):
+        with st.expander(
+            f"View Detailed Incident Analysis ({len(incidents)} Incidents)",
+            expanded=False
+        ):
 
+            # ---------------------------------------------------
+            # INCIDENT SELECTOR
+            # ---------------------------------------------------
+            selected_incident_index = st.selectbox(
+                "Select Incident",
+                options=list(range(len(incidents))),
+                format_func=lambda x: f"Incident {x+1}"
+            )
+
+            incident = incidents[selected_incident_index]
+
+            st.markdown("---")
+
+            # ---------------------------------------------------
+            # INCIDENT CONTENT
+            # ---------------------------------------------------
             if isinstance(incident, dict):
 
                 st.markdown("### 📄 Log Sample")
@@ -746,24 +808,9 @@ if st.session_state.pipeline_completed:
                     language="text"
                 )
 
-    # ---------------------------------------------------
-    # RAW LOGS PREVIEW
-    # ---------------------------------------------------
-    with st.expander(
-        "📜 View Raw Logs (First 200 Lines)"
-    ):
+    else:
 
-        preview_logs = logs[:200]
-
-        st.code(
-            "\n".join(preview_logs),
-            language="text"
-        )
-
-        st.info(
-            f"Showing 200 out of "
-            f"{len(logs)} total log lines"
-        )
+        st.warning("No incidents available.")
 
     # ---------------------------------------------------
     # DOWNLOADS
