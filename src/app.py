@@ -5,6 +5,7 @@ import json
 import logging
 import warnings
 import time
+from datetime import datetime
 
 from rag import RAGEngine
 from detection import IncidentDetector
@@ -32,14 +33,72 @@ logging.getLogger("torch").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 # -----------------------------
-# LOGGING SETUP
+# LOG FILE PATH SETUP
 # -----------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s"
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
 )
 
-logger = logging.getLogger()
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+os.makedirs(LOG_DIR, exist_ok=True)
+
+timestamp = datetime.now().strftime(
+    "%Y%m%d_%H%M%S"
+)
+
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    f"incident_pipeline_{timestamp}.log"
+)
+
+# -----------------------------
+# CUSTOM LOGGER SETUP
+# -----------------------------
+logger = logging.getLogger("incident_pipeline")
+
+# Prevent duplicate handlers
+logger.handlers.clear()
+
+logger.setLevel(logging.INFO)
+
+# Prevent Streamlit root logger propagation
+logger.propagate = False
+
+# -----------------------------
+# LOG FORMAT
+# -----------------------------
+formatter = logging.Formatter(
+    "%(asctime)s | %(levelname)s | %(message)s"
+)
+
+# -----------------------------
+# CONSOLE HANDLER
+# -----------------------------
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+
+# -----------------------------
+# FILE HANDLER
+# -----------------------------
+file_handler = logging.FileHandler(
+    LOG_FILE,
+    mode="w",
+    encoding="utf-8"
+)
+
+file_handler.setFormatter(formatter)
+
+# -----------------------------
+# REGISTER HANDLERS
+# -----------------------------
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+logger.info("========== INCIDENT PIPELINE STARTED ==========")
+logger.info(f"Log file created at: {LOG_FILE}")
+
+# logger = logging.getLogger()
 tracer = trace.get_tracer(__name__)
 
 class UnifiedLLM:
@@ -59,7 +118,12 @@ def live_log(message, logger_callback=None):
     logger.info(message)
 
     if logger_callback:
-        logger_callback(message)
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        formatted_message = f"[{timestamp}] {message}"
+
+        logger_callback(formatted_message)
 
 # -----------------------------
 # HELPERS
@@ -81,8 +145,8 @@ def extract_nodes(log_text: str):
     # ---------------------------------------------------
     pattern = (
         r"\bR\d{2}-M\d-"
-        r"(?:N\d+|NC|NA|NB|NF)"
-        r"(?:-[A-Z])?"
+        r"(?:N\d|NC|NA|NB|NF)"
+        r"(?:-[A-Z])"
         r"(?::J\d{2}-U\d{2})?\b"
     )
 
@@ -255,51 +319,156 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 contents=contents,
                 labels=labels,
                 window_size=100,
-                stride=50
+                stride=100
             )
 
         live_log(f"Total Windows: {len(window_texts)}", logger_callback)
 
-        # -----------------------------
-        live_log("STEP 3: Training Detection Model", logger_callback)
-
         detector = IncidentDetector()
 
-        live_log(
-            "Initializing anomaly detection model...",
-            logger_callback
-        )
+        # ---------------------------------------------------
+        # STEP 3: MODEL INITIALIZATION
+        # ---------------------------------------------------
 
-        live_log(
-            "Training ML model on generated windows...",
-            logger_callback
-        )
+        model_exists = detector.model_exists()
 
         training_texts = [
             "\n".join([r["text"] for r in window])
             for window in window_texts
         ]
 
-        X_test, y_test = detector.train(training_texts, window_labels)
+        # ---------------------------------------------------
+        # LOAD EXISTING MODEL
+        # ---------------------------------------------------
+        if model_exists:
 
-        live_log(
-            "Model training completed successfully",
-            logger_callback
-        )
+            live_log(
+                "STEP 3: Loading Detection Model",
+                logger_callback
+            )
 
-        logger.info("STEP 3.1: Evaluating Model")
+            live_log(
+                "Initializing anomaly detection model...",
+                logger_callback
+            )
 
-        live_log(
-            "Evaluating model performance metrics...",
-            logger_callback
-        )
+            live_log(
+                "Loading pretrained ML model...",
+                logger_callback
+            )
 
-        detector.evaluate(X_test, y_test)
+            detector.load_model()
 
-        live_log(
-            "Model evaluation completed",
-            logger_callback
-        )
+            live_log(
+                "Pretrained ML model loaded successfully",
+                logger_callback
+            )
+
+            # ---------------------------------------------
+            # Skip evaluation when pretrained model exists
+            # ---------------------------------------------
+            ml_metrics = {
+                "accuracy": "Pretrained",
+                "precision": "Pretrained",
+                "recall": "Pretrained",
+                "f1_score": "Pretrained"
+            }
+
+        # ---------------------------------------------------
+        # TRAIN NEW MODEL
+        # ---------------------------------------------------
+        else:
+
+            live_log(
+                "STEP 3: Training Detection Model",
+                logger_callback
+            )
+
+            live_log(
+                "Initializing anomaly detection model...",
+                logger_callback
+            )
+
+            live_log(
+                "Training ML model on generated windows...",
+                logger_callback
+            )
+
+            X_test, y_test = detector.train(
+                training_texts,
+                window_labels
+            )
+
+            live_log(
+                "Model training completed successfully",
+                logger_callback
+            )
+
+            # ---------------------------------------------------
+            # MODEL EVALUATION
+            # ---------------------------------------------------
+            logger.info("STEP 3.1: Evaluating Model")
+
+            live_log(
+                "Evaluating model performance metrics...",
+                logger_callback
+            )
+
+            detector.evaluate(X_test, y_test)
+
+            live_log(
+                "Model evaluation completed",
+                logger_callback
+            )
+
+            # ---------------------------------------------------
+            # ML MODEL METRICS
+            # ---------------------------------------------------
+            predictions_eval = detector.predict(X_test)
+
+            accuracy = accuracy_score(
+                y_test,
+                predictions_eval
+            )
+
+            precision = precision_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            recall = recall_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            f1 = f1_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            ml_metrics = {
+                "accuracy":
+                    round(float(accuracy), 2),
+
+                "precision":
+                    round(float(precision), 2),
+
+                "recall":
+                    round(float(recall), 2),
+
+                "f1_score":
+                    round(float(f1), 2)
+            }
+
+            logger.info(
+                "ML model evaluation completed",
+                extra={
+                    "custom_dimensions": ml_metrics
+                }
+            )
 
         # -----------------------------
         live_log("STEP 4: Detecting Incidents", logger_callback)
@@ -316,53 +485,6 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
         with tracer.start_as_current_span("incident_detection"):
             predictions = detector.predict(prediction_texts)
-        
-        # ---------------------------------------------------
-        # ML MODEL EVALUATION
-        # ---------------------------------------------------
-        accuracy = accuracy_score(
-            window_labels,
-            predictions
-        )
-
-        precision = precision_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        recall = recall_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        f1 = f1_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        ml_metrics = {
-            "accuracy":
-                round(float(accuracy), 2),
-
-            "precision":
-                round(float(precision), 2),
-
-            "recall":
-                round(float(recall), 2),
-
-            "f1_score":
-                round(float(f1), 2)
-        }
-
-        logger.info(
-            "ML model evaluation completed",
-            extra={
-                "custom_dimensions": ml_metrics
-            }
-        )
         
         # ---------------------------------------------------
         # Calculate window statistics
@@ -474,13 +596,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
             env = SystemEnvironment()
 
-            logger.info("🔹 Incident Sample:")
-            try:
-                logger.info(
-                    json.dumps(text[:3], indent=2)
-                )
-            except Exception:
-                logger.info(str(text)[:300])
+            
 
             live_log(
                 "Extracting incident sample logs...",
@@ -512,6 +628,30 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 ]
 
             filtered_text = "\n".join(filtered_lines)
+
+            # ---------------------------------------------------
+            # FULL INCIDENT LOGGING
+            # ---------------------------------------------------
+            logger.info("🔹 Full Incident Window:")
+
+            try:
+                logger.info(
+                    json.dumps(text, indent=2)
+                )
+
+            except Exception:
+                logger.info(str(text))
+
+            # ---------------------------------------------------
+            # LOG FILTERED ANOMALOUS RECORDS
+            # ---------------------------------------------------
+            logger.info("🔹 Filtered Anomalous Records:")
+
+            try:
+                logger.info(filtered_text)
+
+            except Exception:
+                logger.info(str(filtered_text))
 
             with tracer.start_as_current_span("rag_retrieval"):
                 rag_start = time.time()
@@ -545,21 +685,6 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 "Filtering relevant failure records...",
                 logger_callback
             )
-
-            filtered_lines = [
-                record["text"]
-                for record in text
-                if record["label"] == 1
-            ]
-
-            # Fallback safety
-            if not filtered_lines:
-                filtered_lines = [
-                    record["text"]
-                    for record in text
-                ]
-
-            filtered_text = "\n".join(filtered_lines)
 
             live_log(
                 "Running LLM diagnosis engine...",
@@ -733,7 +858,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
             # STORE FOR UI
             incidents_output.append({
                 "incident_id": incident_count + 1,
-                "log": text[:300],
+                "log": filtered_text,
                 "diagnosis": diagnosis,
                 "nodes": nodes,
                 "services": services,

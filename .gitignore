@@ -11,3 +11,5 @@ __pycache__/
 # BGL dataset
 /data/BGL.log
 BGL.log
+
+/logs/
