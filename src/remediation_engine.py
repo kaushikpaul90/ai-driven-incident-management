@@ -1,5 +1,8 @@
 import json
 import re
+import logging
+
+logger = logging.getLogger("incident_pipeline")
 
 class RemediationEngine:
     def __init__(self, llm):
@@ -40,7 +43,7 @@ class RemediationEngine:
             return json.loads(json_str)
 
         except Exception as e:
-            print("⚠️ JSON parsing failed:", e)
+            logger.info(f"⚠️ JSON parsing failed: {e}")
             return {}
 
     # -------------------------------
@@ -141,19 +144,19 @@ class RemediationEngine:
 
         # 🔁 Retry loop
         for attempt in range(2):
-            print(f"\n🔁 Attempt {attempt+1}")
+            logger.info(f"\n🔁 Attempt {attempt+1}")
 
             prompt = build_prompt(error_feedback=error_feedback)
             response = self.llm.invoke(prompt)
 
             raw_text = response if isinstance(response, str) else response.content
             last_raw = raw_text
-            print("\nLLM RAW RESPONSE:", raw_text)
+            logger.info(f"\nLLM RAW RESPONSE: {raw_text}")
 
             parsed = self._parse_response(raw_text)
             if not parsed:
                 error = "Empty or invalid JSON from LLM"
-                print(f"⚠️ Attempt {attempt+1} failed:", error)
+                logger.info(f"⚠️ Attempt {attempt+1} failed: {error}")
                 error_feedback = error
                 continue
 
@@ -165,7 +168,7 @@ class RemediationEngine:
                 for a in recent_actions
             ):
                 error = f"Repeated action detected: {action} on {action_input}"
-                print(f"⚠️ {error}")
+                logger.info(f"⚠️ {error}")
                 error_feedback = error
                 continue
 
@@ -175,7 +178,7 @@ class RemediationEngine:
             # VALIDATION
             # -------------------------------
             # if action not in valid_actions:
-            #     print(f"⚠️ Unknown action from LLM: {action}")
+            #     logger.info(f"⚠️ Unknown action from LLM: {action}")
             #     action = "open_incident_ticket"
             #     action_input = self._build_ticket_description(
             #         diagnosis, action_input or "",
@@ -218,7 +221,7 @@ class RemediationEngine:
             #         "action_input": action_input
             #     }, raw_text
 
-            # print(f"⚠️ Attempt {attempt+1} failed:", error)
+            # logger.info(f"⚠️ Attempt {attempt+1} failed: {error}")
             # error_feedback = error
 
             # -------------------------------
@@ -231,7 +234,7 @@ class RemediationEngine:
                 }, last_raw
 
             # failure → prepare retry
-            print(f"⚠️ Attempt {attempt+1} failed:", error)
+            logger.info(f"⚠️ Attempt {attempt+1} failed: {error}")
             error_feedback = error
             continue
 
@@ -248,7 +251,7 @@ class RemediationEngine:
         # # -------------------------------
         # # FINAL FALLBACK
         # # -------------------------------
-        # print("🚨 LLM failed twice → fallback")
+        # logger.info("🚨 LLM failed twice → fallback")
 
         # return {
         #     "action": "open_incident_ticket",

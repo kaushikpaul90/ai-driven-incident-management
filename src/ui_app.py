@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import json
@@ -100,7 +101,7 @@ def parse_bgl(uploaded_file):
 # ---------------------------------------------------
 
 def add_log(message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    # timestamp = datetime.now().strftime("%H:%M:%S")
 
     # ---------------------------------------------------
     # DETECT ACTIVE STEP
@@ -122,34 +123,38 @@ def add_log(message):
 
     elif "processing completed" in message:
         st.session_state.active_step = "✅ Incident Processing Completed"
+        
+    # ---------------------------------------------------
+    # CLEAN ENTIRE MESSAGE FIRST
+    # ---------------------------------------------------
+    cleaned_message = message.strip()
 
-    if (
-        "Incident" in message
-        and "processing completed" in message
-    ):
+    # ---------------------------------------------------
+    # SKIP EMPTY
+    # ---------------------------------------------------
+    if not cleaned_message:
+        return
 
-        st.session_state.execution_logs.append(
-            "\n" + "=" * 80 + "\n"
-        )
+    # ---------------------------------------------------
+    # REMOVE RAW SEPARATOR-ONLY LINES
+    # ---------------------------------------------------
+    if re.fullmatch(r"=+", cleaned_message):
+        return
 
+    # ---------------------------------------------------
+    # ADD LOG
+    # ---------------------------------------------------
     st.session_state.execution_logs.append(
-        f"[{timestamp}] {message}"
+        cleaned_message
     )
 
-    if (
-        "Pipeline execution completed successfully"
-        in message
-    ):
-
-        st.session_state.execution_logs.append(
-            "\n" + "=" * 80 + "\n"
-        )
-
-    log_placeholder.code(
+    # ---------------------------------------------------
+    # UPDATE UI
+    # ---------------------------------------------------
+    log_placeholder.text(
         "\n".join(
             st.session_state.execution_logs
-        ),
-        language="text"
+        )
     )
 
 # ---------------------------------------------------
@@ -201,11 +206,10 @@ else:
         expanded=False
     ):
 
-        st.code(
+        st.text(
             "\n".join(
                 st.session_state.execution_logs
-            ),
-            language="text"
+            )
         )
 
     log_placeholder = st.empty()
@@ -310,10 +314,42 @@ if run_button:
     )
 
     end_time = time.time()
-    execution_time = round(
+
+    execution_time_seconds = round(
         end_time - start_time,
         2
     )
+
+    # ---------------------------------------------------
+    # HUMAN READABLE EXECUTION TIME
+    # ---------------------------------------------------
+    if execution_time_seconds < 60:
+
+        execution_time = (
+            f"{execution_time_seconds} sec"
+        )
+
+    elif execution_time_seconds < 3600:
+
+        execution_time = round(
+            execution_time_seconds / 60,
+            2
+        )
+
+        execution_time = (
+            f"{execution_time} min"
+        )
+
+    else:
+
+        execution_time = round(
+            execution_time_seconds / 3600,
+            2
+        )
+
+        execution_time = (
+            f"{execution_time} hr"
+        )
 
     st.session_state.execution_time = execution_time
     st.session_state.pipeline_results = data
@@ -448,7 +484,7 @@ if st.session_state.pipeline_completed:
 
         st.metric(
             "Execution Time",
-            f"{execution_time} sec"
+            execution_time
         )
 
     # ---------------------------------------------------

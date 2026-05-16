@@ -118,7 +118,12 @@ def live_log(message, logger_callback=None):
     logger.info(message)
 
     if logger_callback:
-        logger_callback(message)
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        formatted_message = f"[{timestamp}] {message}"
+
+        logger_callback(formatted_message)
 
 # -----------------------------
 # HELPERS
@@ -319,46 +324,151 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
         live_log(f"Total Windows: {len(window_texts)}", logger_callback)
 
-        # -----------------------------
-        live_log("STEP 3: Training Detection Model", logger_callback)
-
         detector = IncidentDetector()
 
-        live_log(
-            "Initializing anomaly detection model...",
-            logger_callback
-        )
+        # ---------------------------------------------------
+        # STEP 3: MODEL INITIALIZATION
+        # ---------------------------------------------------
 
-        live_log(
-            "Training ML model on generated windows...",
-            logger_callback
-        )
+        model_exists = detector.model_exists()
 
         training_texts = [
             "\n".join([r["text"] for r in window])
             for window in window_texts
         ]
 
-        X_test, y_test = detector.train(training_texts, window_labels)
+        # ---------------------------------------------------
+        # LOAD EXISTING MODEL
+        # ---------------------------------------------------
+        if model_exists:
 
-        live_log(
-            "Model training completed successfully",
-            logger_callback
-        )
+            live_log(
+                "STEP 3: Loading Detection Model",
+                logger_callback
+            )
 
-        logger.info("STEP 3.1: Evaluating Model")
+            live_log(
+                "Initializing anomaly detection model...",
+                logger_callback
+            )
 
-        live_log(
-            "Evaluating model performance metrics...",
-            logger_callback
-        )
+            live_log(
+                "Loading pretrained ML model...",
+                logger_callback
+            )
 
-        detector.evaluate(X_test, y_test)
+            detector.load_model()
 
-        live_log(
-            "Model evaluation completed",
-            logger_callback
-        )
+            live_log(
+                "Pretrained ML model loaded successfully",
+                logger_callback
+            )
+
+            # ---------------------------------------------
+            # Skip evaluation when pretrained model exists
+            # ---------------------------------------------
+            ml_metrics = {
+                "accuracy": "Pretrained",
+                "precision": "Pretrained",
+                "recall": "Pretrained",
+                "f1_score": "Pretrained"
+            }
+
+        # ---------------------------------------------------
+        # TRAIN NEW MODEL
+        # ---------------------------------------------------
+        else:
+
+            live_log(
+                "STEP 3: Training Detection Model",
+                logger_callback
+            )
+
+            live_log(
+                "Initializing anomaly detection model...",
+                logger_callback
+            )
+
+            live_log(
+                "Training ML model on generated windows...",
+                logger_callback
+            )
+
+            X_test, y_test = detector.train(
+                training_texts,
+                window_labels
+            )
+
+            live_log(
+                "Model training completed successfully",
+                logger_callback
+            )
+
+            # ---------------------------------------------------
+            # MODEL EVALUATION
+            # ---------------------------------------------------
+            logger.info("STEP 3.1: Evaluating Model")
+
+            live_log(
+                "Evaluating model performance metrics...",
+                logger_callback
+            )
+
+            detector.evaluate(X_test, y_test)
+
+            live_log(
+                "Model evaluation completed",
+                logger_callback
+            )
+
+            # ---------------------------------------------------
+            # ML MODEL METRICS
+            # ---------------------------------------------------
+            predictions_eval = detector.predict(X_test)
+
+            accuracy = accuracy_score(
+                y_test,
+                predictions_eval
+            )
+
+            precision = precision_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            recall = recall_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            f1 = f1_score(
+                y_test,
+                predictions_eval,
+                zero_division=0
+            )
+
+            ml_metrics = {
+                "accuracy":
+                    round(float(accuracy), 2),
+
+                "precision":
+                    round(float(precision), 2),
+
+                "recall":
+                    round(float(recall), 2),
+
+                "f1_score":
+                    round(float(f1), 2)
+            }
+
+            logger.info(
+                "ML model evaluation completed",
+                extra={
+                    "custom_dimensions": ml_metrics
+                }
+            )
 
         # -----------------------------
         live_log("STEP 4: Detecting Incidents", logger_callback)
@@ -375,53 +485,6 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
         with tracer.start_as_current_span("incident_detection"):
             predictions = detector.predict(prediction_texts)
-        
-        # ---------------------------------------------------
-        # ML MODEL EVALUATION
-        # ---------------------------------------------------
-        accuracy = accuracy_score(
-            window_labels,
-            predictions
-        )
-
-        precision = precision_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        recall = recall_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        f1 = f1_score(
-            window_labels,
-            predictions,
-            zero_division=0
-        )
-
-        ml_metrics = {
-            "accuracy":
-                round(float(accuracy), 2),
-
-            "precision":
-                round(float(precision), 2),
-
-            "recall":
-                round(float(recall), 2),
-
-            "f1_score":
-                round(float(f1), 2)
-        }
-
-        logger.info(
-            "ML model evaluation completed",
-            extra={
-                "custom_dimensions": ml_metrics
-            }
-        )
         
         # ---------------------------------------------------
         # Calculate window statistics
