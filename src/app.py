@@ -5,6 +5,7 @@ import json
 import logging
 import warnings
 import time
+from datetime import datetime
 
 from rag import RAGEngine
 from detection import IncidentDetector
@@ -32,14 +33,72 @@ logging.getLogger("torch").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 # -----------------------------
-# LOGGING SETUP
+# LOG FILE PATH SETUP
 # -----------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s"
+BASE_DIR = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
 )
 
-logger = logging.getLogger()
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+os.makedirs(LOG_DIR, exist_ok=True)
+
+timestamp = datetime.now().strftime(
+    "%Y%m%d_%H%M%S"
+)
+
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    f"incident_pipeline_{timestamp}.log"
+)
+
+# -----------------------------
+# CUSTOM LOGGER SETUP
+# -----------------------------
+logger = logging.getLogger("incident_pipeline")
+
+# Prevent duplicate handlers
+logger.handlers.clear()
+
+logger.setLevel(logging.INFO)
+
+# Prevent Streamlit root logger propagation
+logger.propagate = False
+
+# -----------------------------
+# LOG FORMAT
+# -----------------------------
+formatter = logging.Formatter(
+    "%(asctime)s | %(levelname)s | %(message)s"
+)
+
+# -----------------------------
+# CONSOLE HANDLER
+# -----------------------------
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+
+# -----------------------------
+# FILE HANDLER
+# -----------------------------
+file_handler = logging.FileHandler(
+    LOG_FILE,
+    mode="w",
+    encoding="utf-8"
+)
+
+file_handler.setFormatter(formatter)
+
+# -----------------------------
+# REGISTER HANDLERS
+# -----------------------------
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+logger.info("========== INCIDENT PIPELINE STARTED ==========")
+logger.info(f"Log file created at: {LOG_FILE}")
+
+# logger = logging.getLogger()
 tracer = trace.get_tracer(__name__)
 
 class UnifiedLLM:
@@ -255,7 +314,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 contents=contents,
                 labels=labels,
                 window_size=100,
-                stride=50
+                stride=100
             )
 
         live_log(f"Total Windows: {len(window_texts)}", logger_callback)
@@ -474,13 +533,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
             env = SystemEnvironment()
 
-            logger.info("🔹 Incident Sample:")
-            try:
-                logger.info(
-                    json.dumps(text[:3], indent=2)
-                )
-            except Exception:
-                logger.info(str(text)[:300])
+            
 
             live_log(
                 "Extracting incident sample logs...",
@@ -512,6 +565,30 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 ]
 
             filtered_text = "\n".join(filtered_lines)
+
+            # ---------------------------------------------------
+            # FULL INCIDENT LOGGING
+            # ---------------------------------------------------
+            logger.info("🔹 Full Incident Window:")
+
+            try:
+                logger.info(
+                    json.dumps(text, indent=2)
+                )
+
+            except Exception:
+                logger.info(str(text))
+
+            # ---------------------------------------------------
+            # LOG FILTERED ANOMALOUS RECORDS
+            # ---------------------------------------------------
+            logger.info("🔹 Filtered Anomalous Records:")
+
+            try:
+                logger.info(filtered_text)
+
+            except Exception:
+                logger.info(str(filtered_text))
 
             with tracer.start_as_current_span("rag_retrieval"):
                 rag_start = time.time()
@@ -545,21 +622,6 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 "Filtering relevant failure records...",
                 logger_callback
             )
-
-            filtered_lines = [
-                record["text"]
-                for record in text
-                if record["label"] == 1
-            ]
-
-            # Fallback safety
-            if not filtered_lines:
-                filtered_lines = [
-                    record["text"]
-                    for record in text
-                ]
-
-            filtered_text = "\n".join(filtered_lines)
 
             live_log(
                 "Running LLM diagnosis engine...",

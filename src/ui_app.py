@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 import time
 import logging
 from datetime import datetime
@@ -16,6 +17,27 @@ st.set_page_config(
     page_title="Agentic Incident AI",
     layout="wide"
 )
+
+# ---------------------------------------------------
+# SESSION STATE INITIALIZATION
+# ---------------------------------------------------
+if "pipeline_results" not in st.session_state:
+    st.session_state.pipeline_results = None
+
+if "pipeline_completed" not in st.session_state:
+    st.session_state.pipeline_completed = False
+
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+
+if "execution_time" not in st.session_state:
+    st.session_state.execution_time = 0
+
+if "execution_logs" not in st.session_state:
+    st.session_state.execution_logs = []
+
+if "active_step" not in st.session_state:
+    st.session_state.active_step = ""
 
 # ---------------------------------------------------
 # HEADER
@@ -76,18 +98,57 @@ def parse_bgl(uploaded_file):
 # ---------------------------------------------------
 # LIVE LOGGING HELPERS
 # ---------------------------------------------------
-execution_logs = []
 
 def add_log(message):
-
     timestamp = datetime.now().strftime("%H:%M:%S")
 
-    execution_logs.append(
+    # ---------------------------------------------------
+    # DETECT ACTIVE STEP
+    # ---------------------------------------------------
+    if "Training ML model" in message:
+        st.session_state.active_step = "🤖 Training ML Model"
+
+    elif "Running anomaly prediction" in message:
+        st.session_state.active_step = "🚨 Running Anomaly Detection"
+
+    elif "Generating embeddings" in message:
+        st.session_state.active_step = "🧠 Generating Embeddings"
+
+    elif "Running diagnosis" in message:
+        st.session_state.active_step = "🔍 Running LLM Diagnosis"
+
+    elif "Executing remediation" in message:
+        st.session_state.active_step = "⚙️ Executing Remediation"
+
+    elif "processing completed" in message:
+        st.session_state.active_step = "✅ Incident Processing Completed"
+
+    if (
+        "Incident" in message
+        and "processing completed" in message
+    ):
+
+        st.session_state.execution_logs.append(
+            "\n" + "=" * 80 + "\n"
+        )
+
+    st.session_state.execution_logs.append(
         f"[{timestamp}] {message}"
     )
 
+    if (
+        "Pipeline execution completed successfully"
+        in message
+    ):
+
+        st.session_state.execution_logs.append(
+            "\n" + "=" * 80 + "\n"
+        )
+
     log_placeholder.code(
-        "\n".join(execution_logs),
+        "\n".join(
+            st.session_state.execution_logs
+        ),
         language="text"
     )
 
@@ -101,6 +162,14 @@ progress_bar = st.progress(0)
 # ---------------------------------------------------
 st.subheader("⚙️ Pipeline Execution Status")
 
+# ---------------------------------------------------
+# SUCCESS MESSAGE
+# ---------------------------------------------------
+if st.session_state.pipeline_completed:
+    st.success(
+        "✅ Pipeline execution completed successfully!"
+    )
+
 step1_box = st.empty()
 step2_box = st.empty()
 step3_box = st.empty()
@@ -111,7 +180,35 @@ step4_box = st.empty()
 # ---------------------------------------------------
 st.subheader("🖥️ Live Backend Execution Logs")
 
-log_placeholder = st.empty()
+long_task_box = st.empty()
+
+# ---------------------------------------------------
+# DURING EXECUTION
+# ---------------------------------------------------
+if (
+    not st.session_state.pipeline_completed
+):
+
+    log_placeholder = st.empty()
+
+# ---------------------------------------------------
+# AFTER COMPLETION
+# ---------------------------------------------------
+else:
+
+    with st.expander(
+        "📜 View Backend Execution Logs",
+        expanded=False
+    ):
+
+        st.code(
+            "\n".join(
+                st.session_state.execution_logs
+            ),
+            language="text"
+        )
+
+    log_placeholder = st.empty()
 
 # ---------------------------------------------------
 # RUN PIPELINE
@@ -123,6 +220,7 @@ if run_button:
         st.stop()
 
     start_time = time.time()
+    st.session_state.execution_logs = []
 
     # =================================================
     # STEP 1
@@ -177,21 +275,27 @@ if run_button:
     progress_bar.progress(50)
 
     # ---------------------------------------------------
-    # LONG RUNNING TASK MESSAGE
+    # PIPELINE EXECUTION STATUS
     # ---------------------------------------------------
-    long_task_box = st.empty()
+    with long_task_box.container():
 
-    long_task_box.warning(
-        "⏳ AI pipeline execution in progress.\n\n"
-        "The backend is currently:\n"
-        "- Training ML models\n"
-        "- Running anomaly detection\n"
-        "- Initializing embeddings\n"
-        "- Loading RAG pipeline\n"
-        "- Running LLM diagnosis\n"
-        "- Executing remediation engine\n\n"
-        # "Please monitor the live backend logs below."
-    )
+        st.info(
+            "⏳ AI pipeline execution in progress..."
+        )
+
+        with st.expander(
+            "⚙️ View Active Backend Tasks",
+            expanded=False
+        ):
+
+            st.markdown("""
+                - Training ML models
+                - Running anomaly detection
+                - Initializing embeddings
+                - Loading RAG pipeline
+                - Running LLM diagnosis
+                - Executing remediation engine
+            """)
 
     progress_bar.progress(60)
 
@@ -205,16 +309,38 @@ if run_button:
         logger_callback=add_log
     )
 
-    progress_bar.progress(85)
-
-    long_task_box.success(
-        "✅ AI processing completed successfully"
+    end_time = time.time()
+    execution_time = round(
+        end_time - start_time,
+        2
     )
 
-    step3_box.success(
-        "✅ Step 3 Completed | "
-        "Detection + Diagnosis + Remediation finished"
-    )
+    st.session_state.execution_time = execution_time
+    st.session_state.pipeline_results = data
+    st.session_state.pipeline_completed = True
+    st.session_state.logs = logs
+
+    progress_bar.progress(100)
+
+    # ---------------------------------------------------
+    # FORCE UI REFRESH AFTER COMPLETION
+    # ---------------------------------------------------
+    st.rerun()
+
+# ---------------------------------------------------
+# RENDER SAVED RESULTS
+# ---------------------------------------------------
+if st.session_state.pipeline_completed:
+
+    data = st.session_state.pipeline_results
+    logs = st.session_state.logs
+
+    long_task_box.empty()
+    
+    step1_box.empty()
+    step2_box.empty()
+    step3_box.empty()
+    step4_box.empty()
 
     # =================================================
     # STEP 4
@@ -225,25 +351,15 @@ if run_button:
 
     progress_bar.progress(100)
 
-    end_time = time.time()
-
-    execution_time = round(
-        end_time - start_time,
-        2
-    )
-
-    step4_box.success(
-        f"✅ Step 4 Completed | "
-        f"Execution finished in "
-        f"{execution_time} sec"
+    execution_time = st.session_state.get(
+        "execution_time",
+        0
     )
 
     # ---------------------------------------------------
-    # SUCCESS MESSAGE
+    # CLEAR FINALIZATION MESSAGE
     # ---------------------------------------------------
-    st.success(
-        "🎉 Pipeline execution completed successfully!"
-    )
+    step4_box.empty()
 
     # ---------------------------------------------------
     # INCIDENT EXTRACTION
@@ -273,9 +389,6 @@ if run_button:
     # ---------------------------------------------------
     st.subheader("📊 System Metrics")
 
-    # ---------------------------------------------------
-    # FETCH WINDOW STATISTICS
-    # ---------------------------------------------------
     total_windows = data.get(
         "total_windows",
         0
@@ -291,9 +404,6 @@ if run_button:
         0
     )
 
-    # ---------------------------------------------------
-    # TELEMETRY
-    # ---------------------------------------------------
     logger.info(
         "Window statistics displayed",
         extra={
@@ -306,9 +416,6 @@ if run_button:
         }
     )
 
-    # ---------------------------------------------------
-    # UI METRICS
-    # ---------------------------------------------------
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -394,9 +501,6 @@ if run_button:
                 )
             )
 
-        # -------------------------------------------------
-        # VISUALIZATION
-        # -------------------------------------------------
         st.markdown(
             "### 📈 ML Evaluation Visualization"
         )
@@ -409,40 +513,15 @@ if run_button:
                 "F1 Score"
             ],
             "Score": [
-                ml_metrics.get(
-                    "accuracy",
-                    0
-                ),
-
-                ml_metrics.get(
-                    "precision",
-                    0
-                ),
-
-                ml_metrics.get(
-                    "recall",
-                    0
-                ),
-
-                ml_metrics.get(
-                    "f1_score",
-                    0
-                )
+                ml_metrics.get("accuracy", 0),
+                ml_metrics.get("precision", 0),
+                ml_metrics.get("recall", 0),
+                ml_metrics.get("f1_score", 0)
             ]
         })
 
         st.bar_chart(
             ml_chart_df.set_index("Metric")
-        )
-
-        # -------------------------------------------------
-        # TELEMETRY
-        # -------------------------------------------------
-        logger.info(
-            "ML evaluation metrics displayed",
-            extra={
-                "custom_dimensions": ml_metrics
-            }
         )
 
     else:
@@ -467,9 +546,13 @@ if run_button:
             performance_metrics
         )
 
-        # =================================================
-        # GRAPH 1 — AI OPERATIONAL TELEMETRY
-        # =================================================
+        # ---------------------------------------------------
+        # MAKE INCIDENT IDS 1-BASED
+        # ---------------------------------------------------
+        perf_df["incident_id"] = (
+            perf_df["incident_id"] + 1
+        )
+
         st.markdown(
             "### ⚙️ AI Operational Telemetry"
         )
@@ -493,47 +576,6 @@ if run_button:
             telemetry_df
         )
 
-        # -------------------------------------------------
-        # TELEMETRY SUMMARY
-        # -------------------------------------------------
-        avg_diagnosis_time = round(
-            perf_df["diagnosis_time_sec"].mean(),
-            2
-        )
-
-        avg_remediation_time = round(
-            perf_df["remediation_time_sec"].mean(),
-            2
-        )
-
-        avg_confidence = round(
-            perf_df["confidence"].mean(),
-            2
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "Avg Diagnosis Time",
-                f"{avg_diagnosis_time} sec"
-            )
-
-        with col2:
-            st.metric(
-                "Avg Remediation Time",
-                f"{avg_remediation_time} sec"
-            )
-
-        with col3:
-            st.metric(
-                "Avg Confidence",
-                avg_confidence
-            )
-
-        # =================================================
-        # GRAPH 2 — EVALUATION METRICS
-        # =================================================
         st.markdown(
             "### 🧠 Evaluation Metrics"
         )
@@ -555,83 +597,15 @@ if run_button:
             evaluation_df
         )
 
-        # -------------------------------------------------
-        # EVALUATION SUMMARY
-        # -------------------------------------------------
-        avg_action_accuracy = round(
-            perf_df["action_correctness"].mean(),
-            2
-        )
-
-        avg_resolution_success = round(
-            perf_df["resolution_success"].mean(),
-            2
-        )
-
-        avg_reasoning_quality = round(
-            perf_df["reasoning_quality"].mean(),
-            2
-        )
-
-        col4, col5, col6 = st.columns(3)
-
-        with col4:
-            st.metric(
-                "Avg Action Accuracy",
-                avg_action_accuracy
-            )
-
-        with col5:
-            st.metric(
-                "Avg Resolution Success",
-                avg_resolution_success
-            )
-
-        with col6:
-            st.metric(
-                "Avg Reasoning Quality",
-                avg_reasoning_quality
-            )
-
-        # =================================================
-        # DETAILED TABLE
-        # =================================================
         with st.expander(
             "📋 Detailed Performance Metrics"
         ):
 
             st.dataframe(
-                perf_df,
-                use_container_width=True
+                perf_df.reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True
             )
-
-        # =================================================
-        # TELEMETRY LOGGING
-        # =================================================
-        logger.info(
-            "Performance visualization rendered",
-            extra={
-                "custom_dimensions": {
-                    "total_visualized_incidents":
-                        len(perf_df),
-
-                    "avg_diagnosis_time_sec":
-                        avg_diagnosis_time,
-
-                    "avg_remediation_time_sec":
-                        avg_remediation_time,
-
-                    "avg_confidence":
-                        avg_confidence,
-
-                    "avg_action_accuracy":
-                        avg_action_accuracy,
-
-                    "avg_resolution_success":
-                        avg_resolution_success
-                }
-            }
-        )
 
     else:
 
@@ -769,7 +743,7 @@ if run_button:
 
     st.download_button(
         label="Download Incident Results",
-        data=str(data),
+        data=json.dumps(data, indent=2),
         file_name="incident_results.json",
         mime="application/json"
     )
