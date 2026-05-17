@@ -7,6 +7,11 @@ import logging
 from datetime import datetime
 from app import run_pipeline
 from telemetry import setup_telemetry
+from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 setup_telemetry()
 logger = logging.getLogger(__name__)
@@ -59,10 +64,53 @@ max_incidents = st.sidebar.number_input(
     step=1
 )
 
-uploaded_file = st.sidebar.file_uploader(
-    "📂 Upload Log File (BGL.log)",
-    type=["log", "txt"]
+# ---------------------------------------------------
+# LOG SOURCE CONFIGURATION
+# ---------------------------------------------------
+
+AZURE_STORAGE_CONNECTION_STRING = os.getenv(
+    "AZURE_STORAGE_CONNECTION_STRING"
 )
+
+BLOB_CONTAINER_NAME = "incidentlogs"
+
+BLOB_FILE_NAME = "BGL.log"
+
+# ---------------------------------------------------
+# LOG SOURCE SELECTION
+# ---------------------------------------------------
+
+log_source = st.sidebar.radio(
+    "Select Log Source",
+    [
+        "Azure Blob Storage",
+        "Local Upload"
+    ]
+)
+
+uploaded_file = None
+
+# ---------------------------------------------------
+# AZURE BLOB STORAGE
+# ---------------------------------------------------
+
+if log_source == "Azure Blob Storage":
+
+    # st.sidebar.success(
+    #     "✅ Using BGL.log from Azure Blob Storage"
+    # )
+    pass
+
+# ---------------------------------------------------
+# LOCAL FILE UPLOAD
+# ---------------------------------------------------
+
+else:
+
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Log File",
+        type=["log", "txt"]
+    )
 
 run_button = st.sidebar.button("▶️ Run Pipeline")
 
@@ -220,7 +268,10 @@ else:
 # ---------------------------------------------------
 if run_button:
 
-    if uploaded_file is None:
+    if (
+        log_source == "Local Upload"
+        and uploaded_file is None
+    ):
         st.error("❌ Please upload a BGL.log file")
         st.stop()
 
@@ -234,7 +285,116 @@ if run_button:
         "🔄 Step 1: Parsing Uploaded Log File..."
     )
 
-    logs, labels = parse_bgl(uploaded_file)
+    # =================================================
+    # LOAD LOGS
+    # =================================================
+
+    if log_source == "Azure Blob Storage":
+
+        try:
+
+            # -----------------------------------------
+            # LOG START
+            # -----------------------------------------
+
+            logger.info(
+                "Connecting to Azure Blob Storage",
+                extra={
+                    "custom_dimensions": {
+                        "container": BLOB_CONTAINER_NAME,
+                        "blob_name": BLOB_FILE_NAME
+                    }
+                }
+            )
+
+            # -----------------------------------------
+            # CONNECT TO AZURE BLOB STORAGE
+            # -----------------------------------------
+
+            blob_service_client = BlobServiceClient.from_connection_string(
+                AZURE_STORAGE_CONNECTION_STRING
+            )
+
+            blob_client = blob_service_client.get_blob_client(
+                container=BLOB_CONTAINER_NAME,
+                blob=BLOB_FILE_NAME
+            )
+
+            # -----------------------------------------
+            # DOWNLOAD BLOB CONTENT
+            # -----------------------------------------
+
+            blob_data = blob_client.download_blob().readall()
+
+            logger.info(
+                "Successfully downloaded BGL.log from Blob Storage",
+                extra={
+                    "custom_dimensions": {
+                        "container": BLOB_CONTAINER_NAME,
+                        "blob_name": BLOB_FILE_NAME,
+                        "blob_size_bytes": len(blob_data)
+                    }
+                }
+            )
+
+            # -----------------------------------------
+            # PARSE LOG FILE
+            # -----------------------------------------
+
+            lines = blob_data.decode(
+                "utf-8",
+                errors="ignore"
+            ).splitlines()
+
+            logs = []
+            labels = []
+
+            for line in lines:
+
+                parts = line.split()
+
+                if len(parts) < 2:
+                    continue
+
+                label_token = parts[0]
+
+                if label_token == "-":
+                    labels.append(0)
+                else:
+                    labels.append(1)
+
+                logs.append(line.strip())
+
+            logger.info(
+                "Successfully parsed blob log file",
+                extra={
+                    "custom_dimensions": {
+                        "total_logs": len(logs),
+                        "total_labels": len(labels)
+                    }
+                }
+            )
+
+        except Exception as ex:
+
+            logger.exception(
+                f"Blob download failed: {str(ex)}"
+            )
+
+            st.error(
+                "❌ Failed to download log file "
+                "from Azure Blob Storage"
+            )
+
+            st.stop()
+
+    # =================================================
+    # LOCAL FILE UPLOAD
+    # =================================================
+
+    else:
+
+        logs, labels = parse_bgl(uploaded_file)
 
     progress_bar.progress(15)
 
