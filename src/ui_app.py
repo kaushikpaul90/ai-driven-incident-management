@@ -1,15 +1,15 @@
+import os
 import re
 import streamlit as st
 import pandas as pd
 import json
 import time
 import logging
-from datetime import datetime
 from app import run_pipeline
 from telemetry import setup_telemetry
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
-import os
+from opentelemetry import trace
 
 load_dotenv()
 
@@ -294,87 +294,78 @@ if run_button:
 
         try:
 
-            # -----------------------------------------
-            # LOG START
-            # -----------------------------------------
+            tracer = trace.get_tracer(__name__)
 
-            logger.info(
-                "Connecting to Azure Blob Storage",
-                extra={
-                    "custom_dimensions": {
-                        "container": BLOB_CONTAINER_NAME,
-                        "blob_name": BLOB_FILE_NAME
-                    }
-                }
-            )
+            with tracer.start_as_current_span(
+                "azure_blob_download"
+            ) as span:
 
-            # -----------------------------------------
-            # CONNECT TO AZURE BLOB STORAGE
-            # -----------------------------------------
+                span.set_attribute(
+                    "blob.container",
+                    BLOB_CONTAINER_NAME
+                )
 
-            blob_service_client = BlobServiceClient.from_connection_string(
-                AZURE_STORAGE_CONNECTION_STRING
-            )
+                span.set_attribute(
+                    "blob.name",
+                    BLOB_FILE_NAME
+                )
 
-            blob_client = blob_service_client.get_blob_client(
-                container=BLOB_CONTAINER_NAME,
-                blob=BLOB_FILE_NAME
-            )
+                # -----------------------------------------
+                # CONNECT TO STORAGE
+                # -----------------------------------------
 
-            # -----------------------------------------
-            # DOWNLOAD BLOB CONTENT
-            # -----------------------------------------
+                blob_service_client = BlobServiceClient.from_connection_string(
+                    AZURE_STORAGE_CONNECTION_STRING
+                )
 
-            blob_data = blob_client.download_blob().readall()
+                blob_client = blob_service_client.get_blob_client(
+                    container=BLOB_CONTAINER_NAME,
+                    blob=BLOB_FILE_NAME
+                )
 
-            logger.info(
-                "Successfully downloaded BGL.log from Blob Storage",
-                extra={
-                    "custom_dimensions": {
-                        "container": BLOB_CONTAINER_NAME,
-                        "blob_name": BLOB_FILE_NAME,
-                        "blob_size_bytes": len(blob_data)
-                    }
-                }
-            )
+                # -----------------------------------------
+                # DOWNLOAD BLOB
+                # -----------------------------------------
 
-            # -----------------------------------------
-            # PARSE LOG FILE
-            # -----------------------------------------
+                blob_data = blob_client.download_blob().readall()
 
-            lines = blob_data.decode(
-                "utf-8",
-                errors="ignore"
-            ).splitlines()
+                span.set_attribute(
+                    "blob.size_bytes",
+                    len(blob_data)
+                )
 
-            logs = []
-            labels = []
+                # -----------------------------------------
+                # PARSE LOGS
+                # -----------------------------------------
 
-            for line in lines:
+                lines = blob_data.decode(
+                    "utf-8",
+                    errors="ignore"
+                ).splitlines()
 
-                parts = line.split()
+                logs = []
+                labels = []
 
-                if len(parts) < 2:
-                    continue
+                for line in lines:
 
-                label_token = parts[0]
+                    parts = line.split()
 
-                if label_token == "-":
-                    labels.append(0)
-                else:
-                    labels.append(1)
+                    if len(parts) < 2:
+                        continue
 
-                logs.append(line.strip())
+                    label_token = parts[0]
 
-            logger.info(
-                "Successfully parsed blob log file",
-                extra={
-                    "custom_dimensions": {
-                        "total_logs": len(logs),
-                        "total_labels": len(labels)
-                    }
-                }
-            )
+                    if label_token == "-":
+                        labels.append(0)
+                    else:
+                        labels.append(1)
+
+                    logs.append(line.strip())
+
+                span.set_attribute(
+                    "parsed.total_logs",
+                    len(logs)
+                )
 
         except Exception as ex:
 
@@ -602,18 +593,6 @@ if st.session_state.pipeline_completed:
         0
     )
 
-    logger.info(
-        "Window statistics displayed",
-        extra={
-            "custom_dimensions": {
-                "total_windows": total_windows,
-                "correct_windows": correct_windows,
-                "anomalous_windows": anomalous_windows,
-                "processed_incidents": processed_count
-            }
-        }
-    )
-
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -647,85 +626,6 @@ if st.session_state.pipeline_completed:
         st.metric(
             "Execution Time",
             execution_time
-        )
-
-    # ---------------------------------------------------
-    # ML MODEL EVALUATION
-    # ---------------------------------------------------
-    st.subheader("🤖 ML Model Evaluation")
-
-    ml_metrics = data.get(
-        "ml_metrics",
-        {}
-    )
-
-    if len(ml_metrics) > 0:
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            st.metric(
-                "Accuracy",
-                ml_metrics.get(
-                    "accuracy",
-                    0
-                )
-            )
-
-        with col2:
-            st.metric(
-                "Precision",
-                ml_metrics.get(
-                    "precision",
-                    0
-                )
-            )
-
-        with col3:
-            st.metric(
-                "Recall",
-                ml_metrics.get(
-                    "recall",
-                    0
-                )
-            )
-
-        with col4:
-            st.metric(
-                "F1 Score",
-                ml_metrics.get(
-                    "f1_score",
-                    0
-                )
-            )
-
-        st.markdown(
-            "### 📈 ML Evaluation Visualization"
-        )
-
-        ml_chart_df = pd.DataFrame({
-            "Metric": [
-                "Accuracy",
-                "Precision",
-                "Recall",
-                "F1 Score"
-            ],
-            "Score": [
-                ml_metrics.get("accuracy", 0),
-                ml_metrics.get("precision", 0),
-                ml_metrics.get("recall", 0),
-                ml_metrics.get("f1_score", 0)
-            ]
-        })
-
-        st.bar_chart(
-            ml_chart_df.set_index("Metric")
-        )
-
-    else:
-
-        st.warning(
-            "No ML evaluation metrics available."
         )
 
     # ---------------------------------------------------
