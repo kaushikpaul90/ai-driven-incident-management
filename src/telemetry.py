@@ -21,6 +21,11 @@ def setup_telemetry():
         print("Application Insights connection string not found.")
         return
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s"
+    )
+    
     configure_azure_monitor(
         connection_string=connection_string
     )
