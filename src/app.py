@@ -169,113 +169,34 @@ def extract_nodes(log_text: str):
 
     return sorted(list(set(clean_nodes)))
 
+def extract_affected_components(log_text):
 
-def extract_services_from_logs(log_lines):
-    services = set()
-    keywords = ["cache", "memory", "disk", "io", "network", "filesystem", "cpu"]
-
-    for line in log_lines:
-        line = line.lower()
-        for keyword in keywords:
-            if keyword in line:
-                services.add(keyword)
-
-    return list(services)
-
-
-def extract_services_from_diagnosis(diagnosis):
-    services = set()
-
-    text = (
-        diagnosis.get("incident_type", "") +
-        " " +
-        diagnosis.get("root_cause", "")
-    ).lower()
-
-    if "cache" in text:
-        services.add("cache")
-    if "memory" in text:
-        services.add("memory")
-    if "disk" in text or "io" in text:
-        services.add("disk_io")
-    if "network" in text:
-        services.add("network")
-
-    return list(services)
-
-# -----------------------------
-# EXTRACT RELEVANT FAILURE LINES
-# -----------------------------
-def extract_relevant_failure_lines(log_text):
-
-    """
-    Keeps only failure/anomaly related lines from
-    anomalous windows before sending to diagnosis.
-
-    IMPORTANT:
-    Preserve FULL ORIGINAL LOG LINES so node IDs,
-    rack IDs, timestamps, and machine identifiers
-    are retained for diagnosis and remediation.
-    """
-
-    failure_keywords = [
-        "fatal",
-        "error",
-        "fail",
-        "exception",
-        "abort",
-        "panic",
-        "timeout",
-        "unreachable",
-        "socket",
-        "ecc",
-        "parity",
-        "tlb",
-        "memory",
-        "disk",
-        "io",
-        "network",
-        "segmentation",
-        "crash"
+    patterns = [
+        r"\bTLB\b",
+        r"\bECC\b",
+        r"\bCioStream\b",
+        r"\bcache\b",
+        r"\bkernel\b",
+        r"\bciod\b",
+        r"\bASSERT\b",
+        r"\bmachine check\b",
+        r"\balignment exceptions\b"
     ]
 
-    ignore_keywords = [
-        "detected and corrected",
-        "bit sparing",
-        "has been started",
-        "has been restarted"
-    ]
+    components = set()
 
-    lines = log_text.splitlines()
+    for pattern in patterns:
 
-    filtered_lines = []
+        matches = re.findall(
+            pattern,
+            log_text,
+            re.IGNORECASE
+        )
 
-    for line in lines:
+        for match in matches:
+            components.add(match.lower())
 
-        lower_line = line.lower()
-
-        # ---------------------------------------------------
-        # SKIP CORRECTED / INFORMATIONAL RECORDS
-        # ---------------------------------------------------
-        if any(keyword in lower_line for keyword in ignore_keywords):
-            continue
-
-        # ---------------------------------------------------
-        # KEEP FAILURE RECORDS
-        # IMPORTANT:
-        # KEEP ENTIRE ORIGINAL LINE
-        # ---------------------------------------------------
-        if any(keyword in lower_line for keyword in failure_keywords):
-
-            filtered_lines.append(line.strip())
-
-    # ---------------------------------------------------
-    # FALLBACK
-    # ---------------------------------------------------
-    if not filtered_lines:
-        return log_text
-
-    return "\n".join(filtered_lines)
+    return sorted(list(components))
 
 # =========================================================
 # 🚀 MAIN PIPELINE FUNCTION (USED BY UI)
@@ -781,16 +702,20 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                     for record in text
                 ]
 
-            services_logs = extract_services_from_logs(service_logs)
-            services_diag = extract_services_from_diagnosis(diagnosis)
-            services = list(set(services_logs + services_diag))
+            affected_components = extract_affected_components(
+                filtered_text
+            )
 
-            env.register_services(services)
+            env.register_services(
+                affected_components
+            )
 
-            logger.info(f"🔍 Services: {services}")
+            env.register_services(affected_components)
+
+            logger.info(f"🔍 Services: {affected_components}")
 
             live_log(
-                f"Detected impacted services: {services}",
+                f"Detected impacted services: {affected_components}",
                 logger_callback
             )
 
@@ -861,7 +786,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
                 "log": filtered_text,
                 "diagnosis": diagnosis,
                 "nodes": nodes,
-                "services": services,
+                "affected_components": affected_components,
                 "action": remediation_result.get("action"),
                 "result": remediation_result.get("result"),
                 "metrics": metrics

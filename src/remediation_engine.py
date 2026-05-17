@@ -110,13 +110,18 @@ class RemediationEngine:
                         AVAILABLE ACTIONS:
                         {valid_actions}
 
-                        DECISION GUIDELINES:
-                        - Hardware errors (TLB, cache parity, memory ECC) → restart_node / isolate_node / monitor_node
-                        - Network errors (socket, CioStream, connectivity) → restart_service (use "network" if available)
-                        - Service crash → start_service
-                        - Misconfiguration / file errors → verify_configuration
-                        - Transient / corrected errors → no_action_required
-                        - Severe / unknown / no valid target → open_incident_ticket
+                        Determine the most appropriate remediation action based on:
+
+                        - incident type
+                        - root cause
+                        - affected components
+                        - available nodes
+                        - environment state
+                        - previous remediation history
+
+                        Avoid repetitive remediation actions.
+                        Prefer minimally disruptive actions first.
+                        Escalate severe incidents appropriately.
 
                         STRICT RULES:
                         - Node actions MUST use a name from VALID NODES exactly as listed
@@ -125,6 +130,23 @@ class RemediationEngine:
                         - If VALID NODES is empty → DO NOT choose node actions
                         - If VALID SERVICES is empty → DO NOT choose service actions
                         - If neither nodes nor services are available → use open_incident_ticket
+
+                        REMEDIATION GUIDELINES:
+                        - Use the diagnosis,
+                        retrieved operational context,
+                        system state,
+                        and affected components
+                        to determine the best remediation action.
+
+                        - Prefer operationally safe
+                        and minimally disruptive actions.
+
+                        - Similar incidents should generally
+                        result in similar remediation actions
+                        unless strong evidence suggests otherwise.
+
+                        - Choose the most contextually appropriate
+                        remediation action from AVAILABLE ACTIONS.
 
                         IMPORTANT:
                         - Output ONLY JSON
@@ -336,3 +358,4 @@ class RemediationEngine:
             "result": result,
             "environment_state": env.to_dict()
         }
+    

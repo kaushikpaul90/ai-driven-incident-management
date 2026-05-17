@@ -754,12 +754,12 @@ if st.session_state.pipeline_completed:
                             incident.get("nodes")
                         )
 
-                    if "services" in incident:
+                    if "affected_components" in incident:
 
-                        st.markdown("### 🔍 Services")
+                        st.markdown("### 🔍 Affected Components")
 
                         st.write(
-                            incident.get("services")
+                            incident.get("affected_components")
                         )
 
                 with col2:
