@@ -39,15 +39,34 @@ class DiagnosisAgent:
 
                     Analyze the incident and provide a structured diagnosis.
 
-                    CLASSIFICATION RULES (apply strictly):
-                    - If the log contains "TLB" or "cache parity" or "ECC" or "hardware"
-                      → incident_type must reflect the hardware fault (e.g. "TLB Error",
-                        "Cache Parity Error"). root_cause must describe the hardware issue.
-                    - If the log contains "CioStream" or "socket" or "failed to read message
-                      prefix" WITHOUT any hardware fault keywords
-                      → incident_type should be "Network Connectivity Issue". root_cause
-                        should describe the socket/stream failure.
-                    - Do NOT mix hardware incident_type with a network root_cause or vice versa.
+                    DIAGNOSIS INSTRUCTIONS:
+
+                    Analyze the incident dynamically from the logs.
+
+                    IMPORTANT:
+                    - Do NOT force predefined categories.
+                    - Preserve the exact technical terminology from the logs.
+                    - The incident_type should reflect the dominant failure signature.
+                    - Prefer specific incident names over generic categories.
+                    - Root cause MUST ONLY be inferred from the provided logs.
+                    - Do NOT introduce unrelated hardware or memory errors.
+                    - Do NOT mention TLB/cache/ECC unless explicitly present in logs.
+                    - If evidence is insufficient, keep root cause conservative.
+                    - Prefer infrastructure-specific terminology from logs.
+                    - Avoid overly generic root causes like "Network Issue".
+                    - Summarize failures using actual daemon/component names where possible.
+
+                    Examples:
+                    - "data TLB error interrupt"
+                    - "instruction cache parity error"
+                    - "CioStream socket link severed"
+                    - "machine check timeout"
+                    - "application image loading failure"
+
+                    Avoid oversimplified labels like:
+                    - "Network Issue"
+                    - "Hardware Failure"
+                    unless the logs are too ambiguous.
 
                     Respond ONLY in valid JSON format with the following fields:
                     {{
