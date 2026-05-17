@@ -15,6 +15,7 @@ load_dotenv()
 
 setup_telemetry()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # ---------------------------------------------------
 # PAGE CONFIG
@@ -787,64 +788,6 @@ if st.session_state.pipeline_completed:
                 ) * 100
 
             st.bar_chart(chart_df)
-
-        st.markdown(
-            "### 🧠 Evaluation Metrics"
-        )
-
-        avg_action = round(
-            perf_df["action_correctness"].mean(),
-            2
-        )
-
-        avg_resolution = round(
-            perf_df["resolution_success"].mean(),
-            2
-        )
-
-        avg_reasoning = round(
-            perf_df["reasoning_quality"].mean(),
-            2
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.metric(
-                "Action Correctness",
-                avg_action
-            )
-
-            st.progress(avg_action)
-
-        with col2:
-
-            st.metric(
-                "Resolution Success",
-                avg_resolution
-            )
-
-            st.progress(avg_resolution)
-
-        with col3:
-
-            st.metric(
-                "Reasoning Quality",
-                avg_reasoning
-            )
-
-            st.progress(avg_reasoning)
-
-        with st.expander(
-            "📋 Detailed Performance Metrics"
-        ):
-
-            st.dataframe(
-                perf_df.reset_index(drop=True),
-                use_container_width=True,
-                hide_index=True
-            )
 
     else:
 
