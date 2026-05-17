@@ -15,6 +15,7 @@ torchvision
 watchdog
 azure-identity
 azure-keyvault-secrets
+azure-storage-blob
 python-dotenv
 openai
 joblib
