@@ -87,6 +87,9 @@ ai-driven-incident-management/
 │   ├── evaluation.py
 │   └── ...
 │
+├── run_app.sh
+├── .env.example
+├── .gitignore
 ├── README.md
 ├── requirements.txt
 ├── analyze_bgl_errors.py
@@ -160,44 +163,19 @@ pip install -r requirements.txt
 
 ---
 
-# Requirements.txt
+# Create Environment File
 
-```txt
-pandas
-numpy
-scikit-learn
-tqdm
-sentence-transformers
-faiss-cpu
-ollama
-langchain
-langchain-community
-langchain_core
-langchain-openai
-streamlit
-torch
-torchvision
-watchdog
-azure-identity
-azure-keyvault-secrets
-azure-storage-blob
-python-dotenv
-openai
-joblib
-azure-monitor-opentelemetry==1.6.4
-opentelemetry-api==1.30.0
-opentelemetry-sdk==1.30.0
-opentelemetry-semantic-conventions==0.51b0
-plotly
+Copy:
+
+```bash
+cp .env.example .env
 ```
+
+Update `.env` with your configuration values.
 
 ---
 
-# Environment Variables
-
-Create a `.env` file in the project root.
-
-## Example `.env`
+# Example `.env`
 
 ```env
 LLM_PROVIDER=ollama
@@ -221,7 +199,67 @@ AZURE_STORAGE_CONNECTION_STRING=<your-storage-connection-string>
 
 # Running the Application Locally
 
-## 1. Clear Streamlit Cache
+## 1. Start Ollama
+
+Before launching the application, ensure Ollama is running:
+
+```bash
+ollama serve
+```
+
+---
+
+## 2. Grant Execute Permission
+
+Run once:
+
+```bash
+chmod +x run_app.sh
+```
+
+---
+
+## 3. Execute the Script
+
+```bash
+./run_app.sh
+```
+
+---
+
+# run_app.sh Content
+
+```bash
+#!/bin/bash
+
+echo "========================================="
+echo "Clearing Streamlit cache..."
+echo "========================================="
+
+streamlit cache clear
+
+echo ""
+echo "========================================="
+echo "Removing Streamlit session state..."
+echo "========================================="
+
+rm -rf ~/.streamlit
+
+echo ""
+echo "========================================="
+echo "Starting Streamlit application..."
+echo "========================================="
+
+python -m streamlit run src/ui_app.py --server.maxUploadSize 1024
+```
+
+---
+
+# Manual Alternative (Optional)
+
+If preferred, the application can also be started manually:
+
+## Clear Streamlit Cache
 
 ```bash
 streamlit cache clear
@@ -229,7 +267,7 @@ streamlit cache clear
 
 ---
 
-## 2. Remove Existing Streamlit Session State
+## Remove Existing Streamlit Session State
 
 ### Mac/Linux
 
@@ -245,15 +283,7 @@ Remove-Item -Recurse -Force $HOME\.streamlit
 
 ---
 
-## 3. Start Ollama
-
-```bash
-ollama serve
-```
-
----
-
-## 4. Run Streamlit Application
+## Run Streamlit Application
 
 ```bash
 python -m streamlit run src/ui_app.py --server.maxUploadSize 1024
@@ -770,6 +800,19 @@ incidentlogs
 > Note:
 > The BGL.log dataset is approximately 700MB in size.
 > For cloud deployments, Azure Blob Storage is strongly recommended instead of browser upload.
+
+---
+
+# Recommended .gitignore Entries
+
+```gitignore
+.env
+.venv/
+__pycache__/
+*.pyc
+.streamlit/
+models/*.pkl
+```
 
 ---
 
