@@ -1,3 +1,4 @@
+````md
 # Agentic Incident Detection & Auto-Remediation System
 
 ## Overview
@@ -6,12 +7,12 @@ This project is an AI-powered autonomous incident detection and remediation plat
 
 The system combines:
 
-* Machine Learning-based anomaly detection
-* Retrieval-Augmented Generation (RAG)
-* Large Language Models (LLMs)
-* Autonomous remediation simulation
-* Azure cloud observability
-* Real-time telemetry monitoring
+- Machine Learning-based anomaly detection
+- Retrieval-Augmented Generation (RAG)
+- Large Language Models (LLMs)
+- Autonomous remediation simulation
+- Azure cloud observability
+- Real-time telemetry monitoring
 
 The application processes large-scale production logs (Blue Gene/L dataset), identifies anomalies, performs AI-driven diagnosis, retrieves relevant operational knowledge, and executes simulated remediation actions.
 
@@ -19,17 +20,17 @@ The application processes large-scale production logs (Blue Gene/L dataset), ide
 
 # Key Features
 
-* ML-based anomaly detection using TF-IDF + Logistic Regression
-* Dynamic log parsing and anomaly classification
-* RAG-powered operational context retrieval using FAISS
-* LLM-based incident diagnosis using Ollama
-* Autonomous remediation engine
-* Real-time Streamlit dashboard
-* Azure Blob Storage integration
-* Azure Application Insights telemetry
-* OpenTelemetry distributed tracing
-* Incident visualization and downloadable results
-* Local and Azure deployment support
+- ML-based anomaly detection using TF-IDF + Logistic Regression
+- Dynamic log parsing and anomaly classification
+- RAG-powered operational context retrieval using FAISS
+- LLM-based incident diagnosis using Ollama
+- Autonomous remediation engine
+- Real-time Streamlit dashboard
+- Azure Blob Storage integration
+- Azure Application Insights telemetry
+- OpenTelemetry distributed tracing
+- Incident visualization and downloadable results
+- Local and Azure deployment support
 
 ---
 
@@ -90,7 +91,7 @@ ai-driven-incident-management/
 ├── requirements.txt
 ├── analyze_bgl_errors.py
 └── discover_error_types.py
-```
+````
 
 ---
 
@@ -108,7 +109,7 @@ Install the following:
 
 Download:
 
-[Ollama Official Website](https://ollama.com?utm_source=chatgpt.com)
+[https://ollama.com](https://ollama.com)
 
 Install required model:
 
@@ -330,6 +331,272 @@ Add it inside `.env`.
 
 ---
 
+# Additional Azure Configuration
+
+## Azure AI Foundry Setup
+
+This project supports Azure-hosted LLMs and embeddings through Azure AI Foundry / Azure OpenAI.
+
+If using Azure instead of Ollama:
+
+Update `.env`:
+
+```env
+LLM_PROVIDER=azure
+EMBEDDING_PROVIDER=azure
+```
+
+---
+
+## 1. Create Azure AI Foundry Resource
+
+Azure Portal:
+
+```text
+Azure AI Foundry → Create
+```
+
+OR
+
+```text
+Azure OpenAI → Create
+```
+
+---
+
+## 2. Deploy Models
+
+Inside Azure AI Foundry:
+
+Deploy:
+
+* Chat model
+* Embedding model
+
+Recommended:
+
+| Purpose         | Model                  |
+| --------------- | ---------------------- |
+| Chat Completion | GPT-4o-mini            |
+| Embeddings      | text-embedding-3-small |
+
+---
+
+## 3. Collect Required Values
+
+From Azure AI Foundry:
+
+| Setting              | Example                             |
+| -------------------- | ----------------------------------- |
+| Endpoint             | https://<resource>.openai.azure.com |
+| API Version          | 2025-01-01-preview                  |
+| Deployment Name      | gpt-4o-mini                         |
+| Embedding Deployment | text-embedding-3-small              |
+
+---
+
+# Azure Key Vault Setup
+
+The application stores sensitive secrets inside Azure Key Vault.
+
+---
+
+## 1. Create Key Vault
+
+Azure Portal:
+
+```text
+Key Vaults → Create
+```
+
+Example:
+
+```text
+kv-agentic-incident-ai
+```
+
+---
+
+## 2. Add Secrets
+
+Inside Key Vault:
+
+```text
+Secrets → Generate/Import
+```
+
+Add the following secrets:
+
+| Secret Name                           | Description                    |
+| ------------------------------------- | ------------------------------ |
+| AZURE-OPENAI-ENDPOINT                 | Azure OpenAI endpoint          |
+| AZURE-OPENAI-API-KEY                  | Azure OpenAI API key           |
+| AZURE-OPENAI-DEPLOYMENT               | Chat model deployment          |
+| AZURE-EMBEDDING-DEPLOYMENT            | Embedding deployment           |
+| APPLICATIONINSIGHTS-CONNECTION-STRING | App Insights connection string |
+| AZURE-STORAGE-CONNECTION-STRING       | Blob storage connection string |
+
+---
+
+# Managed Identity Configuration
+
+The App Service uses Managed Identity to securely access Azure Key Vault without hardcoding credentials.
+
+---
+
+## 1. Enable Managed Identity
+
+Azure Portal:
+
+```text
+App Service
+→ Identity
+→ System assigned
+→ Status = On
+→ Save
+```
+
+This creates a Managed Identity for the App Service.
+
+---
+
+# Grant Key Vault Access
+
+The Managed Identity must be granted permission to read Key Vault secrets.
+
+---
+
+## OPTION 1 — Recommended (RBAC)
+
+### 1. Open Key Vault
+
+```text
+Key Vault
+→ Access control (IAM)
+→ Add role assignment
+```
+
+---
+
+### 2. Assign Role
+
+Assign:
+
+```text
+Key Vault Secrets User
+```
+
+to:
+
+```text
+<your-app-service-name>
+```
+
+---
+
+## OPTION 2 — Access Policies (Older Method)
+
+### 1. Open Key Vault
+
+```text
+Key Vault
+→ Access Policies
+→ Create
+```
+
+---
+
+### 2. Secret Permissions
+
+Enable:
+
+```text
+Get
+List
+```
+
+---
+
+### 3. Select Principal
+
+Choose:
+
+```text
+<your-app-service-managed-identity>
+```
+
+Save changes.
+
+---
+
+# Configure Azure Environment Variables
+
+Azure Portal:
+
+```text
+App Service
+→ Environment Variables
+```
+
+Add:
+
+```text
+LLM_PROVIDER=azure
+EMBEDDING_PROVIDER=azure
+AZURE_OPENAI_API_VERSION=2025-01-01-preview
+AZURE_KEYVAULT_URL=https://kv-agentic-incident-ai.vault.azure.net/
+```
+
+---
+
+# How Authentication Works
+
+```text
+App Service Managed Identity
+        ↓
+Azure Key Vault
+        ↓
+Secrets Retrieved Securely
+        ↓
+Azure OpenAI + Storage + App Insights
+```
+
+No credentials are hardcoded inside source code.
+
+---
+
+# Local Development with Azure Services
+
+Install Azure CLI:
+
+[https://learn.microsoft.com/en-us/cli/azure/install-azure-cli](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
+
+Login:
+
+```bash
+az login
+```
+
+The application will automatically use your Azure developer identity to access Key Vault.
+
+---
+
+# Recommended Production Architecture
+
+```text
+Streamlit App Service
+        ↓
+Managed Identity
+        ↓
+Azure Key Vault
+        ↓
+Azure OpenAI
+Azure Blob Storage
+Application Insights
+```
+
+---
+
 # Azure App Service Deployment
 
 ## 1. Create Azure App Service
@@ -480,7 +747,7 @@ Contains:
 
 The Blue Gene/L dataset can be downloaded from:
 
-[BGL Dataset (Zenodo)](https://zenodo.org/records/8196385/files/BGL.zip?download=1&utm_source=chatgpt.com)
+[https://zenodo.org/records/8196385/files/BGL.zip?download=1](https://zenodo.org/records/8196385/files/BGL.zip?download=1)
 
 After downloading:
 
@@ -493,8 +760,8 @@ BGL.log
 
 3. Upload the file:
 
-   * through the Streamlit UI
-   * OR to Azure Blob Storage container:
+* through the Streamlit UI
+* OR to Azure Blob Storage container:
 
 ```text
 incidentlogs
@@ -564,3 +831,6 @@ BITS Pilani Work Integrated Learning Programme
 # License
 
 This project is intended for academic and research purposes only.
+
+```
+```
