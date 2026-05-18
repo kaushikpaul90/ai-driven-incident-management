@@ -1,4 +1,3 @@
-````md
 # Agentic Incident Detection & Auto-Remediation System
 
 ## Overview
@@ -874,6 +873,3 @@ BITS Pilani Work Integrated Learning Programme
 # License
 
 This project is intended for academic and research purposes only.
-
-```
-```
