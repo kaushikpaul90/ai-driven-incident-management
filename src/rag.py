@@ -1,115 +1,77 @@
-# standard library module for file system operations
+"""Retrieval-Augmented Generation engine using FAISS and embeddings."""
+
 import os
-# Facebook AI Similarity Search for efficient nearest neighbor retrieval
-import faiss
-# numerical computing library used for array handling
 import numpy as np
-# transformer model for generating sentence embeddings
-# from sentence_transformers import SentenceTransformer
+import faiss
 from embedding_client import EmbeddingClient
 
-# Retrieval-Augmented Generation engine combining embedding search with documents
+
 class RAGEngine:
-    # initialize the RAG engine with a path to a knowledge base directory
+    """Load KB documents, build an embedding index, and retrieve relevant text."""
+
     def __init__(self, kb_path):
-        # load a lightweight sentence transformer for embeddings
-        # self.model = SentenceTransformer("all-MiniLM-L6-v2")
         self.embedding_client = EmbeddingClient()
-        # container for raw document texts
         self.documents = []
-        # FAISS index instance, to be populated later
+        self.metadata = []
         self.index = None
-        # load all markdown documents from the knowledge base path
         self.load_documents(kb_path)
-        # build the FAISS index after loading documents
         self.build_index()
 
     def load_documents(self, kb_path):
+        """Read markdown files from the KB directory and store document chunks."""
+
         self.documents = []
         self.metadata = []
 
         for root, _, files in os.walk(kb_path):
-            for file in files:
-                if file.endswith(".md"):
-                    file_path = os.path.join(root, file)
+            for file_name in files:
+                if not file_name.endswith(".md"):
+                    continue
 
-                    with open(file_path, "r") as f:
-                        content = f.read()
+                file_path = os.path.join(root, file_name)
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as stream:
+                    content = stream.read()
 
-                    # identify type
-                    source_type = "runbook" if "runbooks" in root else "external_doc"
+                source_type = "runbook" if "runbooks" in root else "external_doc"
+                sections = content.split("## ")
+                for section in sections:
+                    section_text = section.strip()
+                    if not section_text:
+                        continue
+                    self.documents.append(section_text)
+                    self.metadata.append({"source": source_type, "filename": file_name})
 
-                    # section-based chunking
-                    sections = content.split("## ")
-
-                    for section in sections:
-                        if not section.strip():
-                            continue
-
-                        self.documents.append(section.strip())
-                        self.metadata.append({
-                            "source": source_type,
-                            "filename": file
-                        })
-
-        if len(self.documents) == 0:
+        if not self.documents:
             raise ValueError("No documents loaded. Check knowledge_base path.")
 
-    # create FAISS index from loaded documents
     def build_index(self):
-        # compute embeddings for each document using the transformer
-        # embeddings = self.model.encode(self.documents)
+        """Embed loaded documents and add them to a FAISS index."""
+
         embeddings = self.embedding_client.embed_texts(self.documents)
         embeddings = np.array(embeddings)
-
-        if len(embeddings.shape) == 1:
+        if embeddings.ndim != 2:
             raise ValueError("Embeddings are empty or invalid. Check document loading.")
-    
-        # determine vector dimension from embeddings
-        dimension = embeddings.shape[1]
-        # instantiate a flat (brute-force) L2 index
-        self.index = faiss.IndexFlatL2(dimension)
-        # add all document vectors to the FAISS index
+
+        self.index = faiss.IndexFlatL2(embeddings.shape[1])
         self.index.add(embeddings)
 
-    # retrieve top-k relevant documents for a given query
     def retrieve(self, query, top_k=3):
-        # embed the query text in the same vector space
-        # query_embedding = self.model.encode([query])
+        """Return the most relevant documents for a query."""
 
-        # Azure OpenAI embedding models enforce token limits, so truncate extremely large
-        # incident windows only when Azure embeddings are enabled. Local SentenceTransformer
-        # embeddings continue using the full query without truncation.
         safe_query = query
-        if hasattr(self.embedding_client, "provider"):
-            if self.embedding_client.provider == "azure":
-
-                # Prevent Azure embedding token overflow
-                MAX_QUERY_CHARS = 8000
-
-                if len(query) > MAX_QUERY_CHARS:
-                    print(
-                        f"[RAG] Large query detected ({len(query)} chars). "
-                        f"Truncating to {MAX_QUERY_CHARS} chars for Azure embeddings."
-                    )
-
-                    safe_query = query[:MAX_QUERY_CHARS]
+        if getattr(self.embedding_client, "provider", None) == "azure":
+            max_chars = 8000
+            if len(query) > max_chars:
+                safe_query = query[:max_chars]
 
         query_embedding = self.embedding_client.embed_texts([safe_query])
-
-        # perform nearest-neighbor search to get distances and indices
         distances, indices = self.index.search(np.array(query_embedding), top_k * 2)
-        results = []
-        for i in indices[0]:
-            results.append({
-                "content": self.documents[i],
-                "metadata": self.metadata[i]
-            })
 
-        # prioritize runbooks
-        runbooks = [r for r in results if r["metadata"]["source"] == "runbook"]
-        docs = [r for r in results if r["metadata"]["source"] == "external_doc"]
+        results = [
+            {"content": self.documents[i], "metadata": self.metadata[i]}
+            for i in indices[0]
+        ]
 
-        final = runbooks[:3] + docs[:2]
-
-        return final
+        runbooks = [item for item in results if item["metadata"]["source"] == "runbook"]
+        docs = [item for item in results if item["metadata"]["source"] != "runbook"]
+        return runbooks[:3] + docs[:2]
