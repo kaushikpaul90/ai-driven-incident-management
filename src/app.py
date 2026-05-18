@@ -208,11 +208,6 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
 
         live_log("STEP 1: Loading Logs", logger_callback)
 
-        # BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        # log_path = os.path.join(BASE_DIR, "data", "BGL.log")
-
-        # contents, labels = load_bgl(log_path)
-
         # Use logs coming from UI
         contents = logs
 
@@ -455,15 +450,7 @@ def run_pipeline(logs, labels=None, max_incidents=20, logger_callback=None):
             logger_callback
         )
 
-        # diagnosis_agent = DiagnosisAgent(model="llama3")
         diagnosis_agent = DiagnosisAgent()
-
-        # live_log(
-        #     "Connecting to Ollama LLM...",
-        #     logger_callback
-        # )
-
-        # # llm = Ollama(model="llama3")
 
         live_log(
             "Initializing LLM provider...",
